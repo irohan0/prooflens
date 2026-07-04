@@ -1,0 +1,32 @@
+# ProofLens Phase 1 — Python dependencies
+# NOTE: pins are provisional scaffolding. Confirm compatible versions
+# (torch/transformers/pylate) during the planning phase before staging on CSF3.
+
+# --- Core ---
+numpy
+pyyaml
+
+# --- Sparse baseline (BM25) ---
+rank-bm25
+
+# --- Dense single-vector (ReProver ByT5-small) ---
+# dense.py scores premises by an exact in-memory matmul over the accessible subset (matches
+# ReProver's get_nearest_premises exactly; no ANN error) — so FAISS is NOT required for Phase 1.
+torch
+transformers
+safetensors        # checkpoint weights format
+# faiss-cpu        # not used (exact matmul); re-enable only if a full-corpus ANN index is added
+
+# --- Late interaction (ProofLens-LI) ---
+pylate
+
+# --- Data / benchmark ---
+# lean-dojo               # confirm exact package + version for Benchmark 4 access
+huggingface-hub
+
+# --- Plotting (results/figures) ---
+matplotlib
+
+# --- Dev tooling ---
+ruff
+pytest

@@ -1,0 +1,38 @@
+# ProofLens-LI — late interaction with symbol-anchored token weighting ON (Phase 9).
+# Identical to late_interaction.yaml EXCEPT symbol_weighting.enabled: true and a distinct `name`
+# (so result files don't collide). Same `index.dir` as the OFF config -> reuses the cached premise
+# index (weighting only affects query-token weights, not premise encoding): the ON run is a fast
+# eval-only job. The OFF vs ON pair is the headline ablation.
+name: late_interaction_weighted
+retriever: late_interaction
+
+model:
+  hf_id: lightonai/GTE-ModernColBERT-v1
+  path: ${MODELS_DIR}/lightonai__GTE-ModernColBERT-v1
+  loader: pylate.models.ColBERT
+  query_length: 256
+  document_length: 300
+  batch_size: 32
+
+index:
+  dir: ${SCRATCH}/prooflens/indices/late_interaction   # SAME as OFF -> reuse the cached index
+  backend: exact-maxsim
+
+data:
+  corpus_path: ${DATA_ROOT}/corpus.jsonl
+  splits_dir: ${DATA_ROOT}/
+  split_file: test.json
+  accessibility: computed
+
+symbol_weighting:
+  enabled: true             # ON — the headline ablation
+  symbol_weight: 2.0        # symbol tokens (identifiers / operators / type constructors)
+  default_weight: 1.0       # syntactic filler tokens
+  # kept mild — extreme weights can collapse the ranking (diagnostic #4)
+
+eval:
+  k_list: [1, 10]
+  retrieve_k: 100
+  splits: [random, novel_premises]
+
+seed: 42

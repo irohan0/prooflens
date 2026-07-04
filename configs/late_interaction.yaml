@@ -1,0 +1,42 @@
+# ProofLens-LI — late-interaction (multi-vector) retriever via PyLate. Our contribution.
+# Symbol-anchored token weighting is DEFAULT OFF; the ON/OFF pair is the headline ablation
+# (this config runs OFF — Phase 8; flip symbol_weighting.enabled for the Phase 9 ON run).
+name: late_interaction
+retriever: late_interaction
+
+model:
+  hf_id: lightonai/GTE-ModernColBERT-v1   # CONFIRMED (Phase 2): PyLate ColBERT, 128-dim tokens
+  # Offline path on the cluster (download_data.py stages the snapshot here; id '/' -> '__').
+  # Falls back to hf_id if MODELS_DIR is unset (e.g. local online smoke).
+  path: ${MODELS_DIR}/lightonai__GTE-ModernColBERT-v1
+  loader: pylate.models.ColBERT
+  query_length: 256         # proof states are LONG — PyLate default is only 32, MUST raise (Phase 2)
+  document_length: 300      # premise (full_name + code); log how many premises hit this
+  batch_size: 32
+
+index:
+  dir: ${SCRATCH}/prooflens/indices/late_interaction
+  # 'exact' MaxSim over the accessible subset (NOT PLAID ANN): every retriever must rank the same
+  # accessible candidate set, and exact scoring adds no ANN recall error. PyLate is used only for
+  # GPU encoding; scoring is vectorised numpy. See late_interaction.py.
+  backend: exact-maxsim
+
+data:
+  # DATA_ROOT = .../leandojo_benchmark_4 (confirmed schema, Phase 2)
+  corpus_path: ${DATA_ROOT}/corpus.jsonl
+  splits_dir: ${DATA_ROOT}/
+  split_file: test.json
+  accessibility: computed   # from corpus imports (transitive) + positions; not shipped (Phase 2)
+
+symbol_weighting:
+  enabled: false            # DEFAULT OFF — Phase 8 baseline. Phase 9 flips this to true.
+  symbol_weight: 2.0        # weight for symbol tokens (identifiers/operators/constructors)
+  default_weight: 1.0       # weight for syntactic filler tokens
+  # keep weights mild — extreme weights can collapse the ranking
+
+eval:
+  k_list: [1, 10]
+  retrieve_k: 100
+  splits: [random, novel_premises]
+
+seed: 42

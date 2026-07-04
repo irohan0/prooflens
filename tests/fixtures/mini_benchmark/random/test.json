@@ -1,0 +1,101 @@
+[
+  {
+    "url": "https://example.invalid/fixture",
+    "commit": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    "file_path": "Mathlib/Topology/Basic.lean",
+    "full_name": "continuous_const_fixture",
+    "start": [40, 1],
+    "end": [45, 10],
+    "traced_tactics": [
+      {
+        "tactic": "exact continuous_id",
+        "annotated_tactic": [
+          "exact <a>continuous_id</a>",
+          [
+            {
+              "full_name": "continuous_id",
+              "def_path": "Mathlib/Topology/Basic.lean",
+              "def_pos": [25, 9],
+              "def_end_pos": [25, 22]
+            }
+          ]
+        ],
+        "state_before": "⊢ continuous_id applied here",
+        "state_after": "no goals"
+      },
+      {
+        "tactic": "exact le_refl x",
+        "annotated_tactic": [
+          "exact <a>le_refl</a> x",
+          [
+            {
+              "full_name": "le_refl",
+              "def_path": "Mathlib/Order/Basic.lean",
+              "def_pos": [5, 9],
+              "def_end_pos": [5, 16]
+            }
+          ]
+        ],
+        "state_before": "x : α ⊢ le_refl x",
+        "state_after": "no goals"
+      }
+    ]
+  },
+  {
+    "url": "https://example.invalid/fixture",
+    "commit": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    "file_path": "Mathlib/Order/Basic.lean",
+    "full_name": "le_of_lt_fixture",
+    "start": [30, 1],
+    "end": [33, 5],
+    "traced_tactics": [
+      {
+        "tactic": "exact le_trans (add_comm ..)",
+        "annotated_tactic": [
+          "exact <a>le_trans</a> (<a>add_comm</a> ..)",
+          [
+            {
+              "full_name": "le_trans",
+              "def_path": "Mathlib/Order/Basic.lean",
+              "def_pos": [15, 9],
+              "def_end_pos": [15, 17]
+            },
+            {
+              "full_name": "add_comm",
+              "def_path": "Mathlib/Algebra/Basic.lean",
+              "def_pos": [10, 9],
+              "def_end_pos": [10, 17]
+            }
+          ]
+        ],
+        "state_before": "a b : α ⊢ le_trans of chain",
+        "state_after": "no goals"
+      },
+      {
+        "tactic": "exact foo",
+        "annotated_tactic": [
+          "exact <a>foo</a>",
+          [
+            {
+              "full_name": "foo_missing",
+              "def_path": "Mathlib/Algebra/Basic.lean",
+              "def_pos": [99, 3],
+              "def_end_pos": [99, 10]
+            }
+          ]
+        ],
+        "state_before": "⊢ True",
+        "state_after": "no goals"
+      }
+    ]
+  },
+  {
+    "url": "https://example.invalid/fixture",
+    "commit": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+    "file_path": "Mathlib/Algebra/Basic.lean",
+    "full_name": "no_tactic_theorem_fixture",
+    "start": [50, 1],
+    "end": [50, 20],
+    "traced_tactics": []
+  }
+]

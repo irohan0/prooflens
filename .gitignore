@@ -1,0 +1,44 @@
+# --- Agent-only docs & project memory (never ship) ---
+CLAUDE.md
+docs/
+results/
+.claude/
+
+# --- Data, indices, model artifacts (live on scratch, never in tree) ---
+*.jsonl
+*_data/
+indices/
+*.faiss
+*.npy
+*.pt
+*.bin
+
+# --- Archives ---
+*.tgz
+*.tar.gz
+*.zip
+
+# --- Keep the tiny test fixtures the suite needs to run (override *.jsonl above) ---
+!tests/fixtures/mini_benchmark/corpus.jsonl
+# ...but not their markdown docs (only the top-level README.md ships)
+tests/fixtures/*.md
+
+# --- Environments & caches ---
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+
+# --- Slurm logs ---
+slurm-*.out
+slurm-*.err
+
+# --- Editor / OS ---
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

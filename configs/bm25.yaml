@@ -1,0 +1,26 @@
+# BM25 — sparse lexical baseline (no training)
+# Placeholder values; confirm real dataset paths on scratch before running.
+name: bm25
+retriever: bm25
+
+data:
+  # DATA_ROOT = .../leandojo_benchmark_4 (Zenodo v10). Confirmed schema, Phase 2.
+  corpus_path: ${DATA_ROOT}/corpus.jsonl        # {path, imports[], premises[{full_name,code,start,end,kind}]}
+  splits_dir: ${DATA_ROOT}/                      # <split>/test.json  (random | novel_premises)
+  split_file: test.json                          # Phase 1 evaluates the test split
+  accessibility: computed                        # computed from corpus imports (transitive) + positions;
+                                                 # NOT shipped per-state (confirmed Phase 2)
+
+index:
+  dir: ${SCRATCH}/prooflens/indices/bm25
+
+tokenizer:
+  lean_aware: true          # keep identifiers/operators/type constructors as tokens
+  lowercase: false          # do not lowercase away declaration-name casing
+
+eval:
+  k_list: [1, 10]
+  retrieve_k: 100
+  splits: [random, novel_premises]
+
+seed: 42

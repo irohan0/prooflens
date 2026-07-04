@@ -1,0 +1,4 @@
+# Normalize line endings; force LF for shell scripts (CRLF breaks bash on Linux/clusters).
+* text=auto
+*.sh text eol=lf
+*.py text eol=lf

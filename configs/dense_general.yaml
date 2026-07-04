@@ -1,0 +1,27 @@
+# Optional extra dense baseline (general-purpose text encoder), for context only.
+# Not required for Phase 1 "done"; included as an extension seam.
+name: dense_general
+retriever: dense
+
+model:
+  hf_id: ""                 # fill if this optional baseline is pursued
+  pooling: average
+  similarity: cosine
+  max_length: 512
+  batch_size: 64
+
+data:
+  corpus_path: ${DATA_ROOT}/corpus.jsonl
+  splits_dir: ${DATA_ROOT}/
+  accessibility: from_dataset
+
+index:
+  dir: ${SCRATCH}/prooflens/indices/dense_general
+  backend: faiss
+
+eval:
+  k_list: [1, 10]
+  retrieve_k: 100
+  splits: [random, novel_premises]
+
+seed: 42

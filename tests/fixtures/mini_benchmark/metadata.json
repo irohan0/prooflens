@@ -1,0 +1,10 @@
+{
+  "dataset_name": "ProofLens mini fixture (NOT real data)",
+  "creation_time": "2026-07-01 00:00:00.000000",
+  "from_repo": {
+    "url": "https://example.invalid/fixture",
+    "commit": "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+  },
+  "leandojo_version": "fixture-mirror-of-2.0.0",
+  "note": "Hand-made tiny corpus mirroring the real LeanDojo Benchmark 4 schema for the smoke test. Positions are chosen so accessibility and locate_premise have known outcomes; see tests/fixtures/EXPECTED.md."
+}
