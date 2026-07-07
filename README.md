@@ -97,12 +97,19 @@ published clean-novel, since its own is leaked); the untrained methods *rise*:
 The evaluation harness is the foundation; the natural next steps build directly on it.
 
 - **Fine-tune the late-interaction retriever on Lean.** The off-the-shelf ColBERT embeddings cap the
-  current gains; training on LeanDojo `(proof state, used-premise)` pairs with in-file hard negatives
-  — where the symbol-anchored weighting can compound — is the path to making late interaction
-  competitive with (and ideally beyond) the single-vector dense retriever.
-- **Publish the fine-tuned retriever** (e.g. on Hugging Face) once trained, so others can reuse it.
-- **Tune and extend the symbol weighting** — sweep the weights, refine the symbol/filler token
-  classification, and align it more precisely to Lean's token classes.
+  current gains. The plan: contrastive fine-tuning of the ColBERT model (via PyLate, single GPU) on
+  LeanDojo `(proof state, used-premise)` pairs — positives are the ground-truth tactic's premises,
+  negatives are in-file **hard** negatives (accessible-but-unused premises) plus in-batch negatives,
+  with the loss over the MaxSim score. This is ReProver's supervision recipe applied to a
+  multi-vector representation, and the symbol-anchored weighting is expected to compound with it.
+  Training is done **split-matched** (a model per split, evaluated on its own test set) to avoid the
+  cross-split leakage this harness measures.
+- **Run the fair comparison** — fine-tuned late interaction vs. fine-tuned single-vector dense, with
+  the random→novel_premises generalisation gap as the story metric, and symbol weighting OFF vs ON
+  as the ablation on the trained model.
+- **Publish the fine-tuned retriever** (e.g. on Hugging Face) so others can reuse it.
+- **Tune and extend the symbol weighting** — sweep the weights and refine the symbol/filler token
+  classification to align more precisely with Lean's token classes.
 - **Broaden the evaluation** — extra cut-offs (R@5, R@100, MAP), error analysis of where retrieval
   fails, and per-premise-type breakdowns. The harness already stores the full ranked list per
   example, so new metrics need no re-runs.
