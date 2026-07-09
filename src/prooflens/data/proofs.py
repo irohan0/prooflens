@@ -14,7 +14,7 @@ theorem `start` so the eval loop can compute it via `accessibility.accessible_pr
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -44,6 +44,29 @@ def gold_premises(corpus: Corpus, annotated_tactic) -> set[str]:
     return out
 
 
+def examples_from_theorems(theorems: Iterable[dict], corpus: Corpus) -> Iterator[Example]:
+    """Yield Examples from raw theorem records (the canonical per-tactic rule).
+
+    One Example per tactic with >=1 located gold premise; tactics with no located gold are dropped
+    (matching ReProver's eval), and theorems with no such tactics contribute nothing. Shared by
+    `load_split` (full json) and the Phase-11 audit's streaming reader so the rule lives once.
+    """
+    for thm in theorems:
+        thm_pos: Pos = (thm["start"][0], thm["start"][1])
+        for j, tac in enumerate(thm.get("traced_tactics", [])):
+            gold = gold_premises(corpus, tac["annotated_tactic"])
+            if not gold:                                    # drop tactics with no located gold
+                continue
+            yield Example(
+                eid=f'{thm["full_name"]}#{j}',
+                theorem=thm["full_name"],
+                file_path=thm["file_path"],
+                thm_pos=thm_pos,
+                state=tac["state_before"],
+                gold=frozenset(gold),
+            )
+
+
 def load_split(
     splits_dir: str,
     split: str,
@@ -60,18 +83,4 @@ def load_split(
     data_path = Path(splits_dir) / split / split_file
     with open(data_path, encoding="utf-8") as fh:
         theorems = json.load(fh)
-
-    for thm in theorems:
-        thm_pos: Pos = (thm["start"][0], thm["start"][1])
-        for j, tac in enumerate(thm.get("traced_tactics", [])):
-            gold = gold_premises(corpus, tac["annotated_tactic"])
-            if not gold:                                    # drop tactics with no located gold
-                continue
-            yield Example(
-                eid=f'{thm["full_name"]}#{j}',
-                theorem=thm["full_name"],
-                file_path=thm["file_path"],
-                thm_pos=thm_pos,
-                state=tac["state_before"],
-                gold=frozenset(gold),
-            )
+    yield from examples_from_theorems(theorems, corpus)
