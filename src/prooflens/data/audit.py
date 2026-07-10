@@ -102,6 +102,13 @@ def _stream_json_array(path: str, max_items: int | None = None,
             buf = buf[idx:]
 
 
+def stream_theorems(path: str, max_theorems: int | None = None) -> Iterator[dict]:
+    """Yield raw theorem records from a split JSON file at bounded memory (public wrapper over
+    `_stream_json_array`). Used by the pair builder, which needs theorem-level grouping (the union
+    of a theorem's gold, and its single per-theorem accessible set)."""
+    return _stream_json_array(path, max_theorems)
+
+
 def stream_examples(path: str, corpus: Corpus,
                     max_theorems: int | None = None) -> Iterator[Example]:
     """Yield `proofs.Example` from a split JSON file, streaming theorem objects (see

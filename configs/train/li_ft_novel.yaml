@@ -1,0 +1,25 @@
+# Fine-tune ProofLens-LI (ColBERT) on the NOVEL_PREMISES split — split-matched (eval only on
+# novel_premises/test). Identical recipe to li_ft_random; only the pairs source and output differ,
+# so the random->novel comparison is clean (same base, same budget, same hyperparameters).
+name: li_ft_novel
+
+base_model:
+  hf_id: lightonai/GTE-ModernColBERT-v1
+  path: ${MODELS_DIR}/lightonai__GTE-ModernColBERT-v1
+  query_length: 384
+  document_length: 300
+
+train:
+  pairs: ${SCRATCH}/prooflens/pairs/novel_premises_bm25_train.jsonl
+  val_pairs: ${SCRATCH}/prooflens/pairs/novel_premises_bm25_val.jsonl
+  epochs: 1
+  batch_size: 32
+  lr: 3.0e-6
+  warmup_ratio: 0.05
+  bf16: true
+  seed: 42
+  logging_steps: 100
+  eval_steps: 500
+  save_steps: 500
+
+output_dir: ${SCRATCH}/prooflens/checkpoints/li_ft_novel_bm25

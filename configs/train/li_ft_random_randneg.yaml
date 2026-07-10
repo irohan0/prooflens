@@ -1,0 +1,24 @@
+# Negatives ABLATION (Phase 17): same recipe as li_ft_random but trained on RANDOM negatives
+# instead of BM25 hard negatives. The BM25-vs-random delta quantifies the hard-negative lift.
+name: li_ft_random_randneg
+
+base_model:
+  hf_id: lightonai/GTE-ModernColBERT-v1
+  path: ${MODELS_DIR}/lightonai__GTE-ModernColBERT-v1
+  query_length: 384
+  document_length: 300
+
+train:
+  pairs: ${SCRATCH}/prooflens/pairs/random_random_train.jsonl    # random-negative triplets
+  val_pairs: ${SCRATCH}/prooflens/pairs/random_random_val.jsonl
+  epochs: 1
+  batch_size: 32
+  lr: 3.0e-6
+  warmup_ratio: 0.05
+  bf16: true
+  seed: 42
+  logging_steps: 100
+  eval_steps: 500
+  save_steps: 500
+
+output_dir: ${SCRATCH}/prooflens/checkpoints/li_ft_random_randneg

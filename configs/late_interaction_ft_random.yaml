@@ -1,0 +1,34 @@
+# Fine-tuned ProofLens-LI evaluated on the RANDOM split — weighting OFF (Phase 14).
+# Same frozen harness as late_interaction.yaml; only model.path (-> the fine-tuned checkpoint), a
+# FRESH index dir (FT embeddings differ), the Phase-11 tuned query_length=384, and eval.splits
+# (pinned to random -> split-matched, no leakage) change.
+name: late_interaction_ft_random
+retriever: late_interaction
+
+model:
+  hf_id: lightonai/GTE-ModernColBERT-v1                       # base (provenance only)
+  path: ${SCRATCH}/prooflens/checkpoints/li_ft_random_bm25    # the fine-tuned checkpoint
+  loader: pylate.models.ColBERT
+  query_length: 384         # Phase-11 locked (recovers the 26% state truncation)
+  document_length: 300
+  batch_size: 32
+
+index:
+  dir: ${SCRATCH}/prooflens/indices/li_ft_random             # fresh: re-encode premises with the FT model
+  backend: exact-maxsim
+
+data:
+  corpus_path: ${DATA_ROOT}/corpus.jsonl
+  splits_dir: ${DATA_ROOT}/
+  split_file: test.json
+  accessibility: computed
+
+symbol_weighting:
+  enabled: false            # OFF baseline for the trained model; the ON pair is late_interaction_ft_random_weighted
+
+eval:
+  k_list: [1, 10]
+  retrieve_k: 100
+  splits: [random]          # split-matched: the random-trained checkpoint is evaluated ONLY on random/test
+
+seed: 42

@@ -146,6 +146,16 @@ def test_li_scores_descending_and_capped_at_k():
     assert scores == sorted(scores, reverse=True)
 
 
+def _assert_consistent_ranking(a, b, tol: float = 1e-6) -> None:
+    """Same premises retrieved with matching scores. Exact ordered-list equality is unsafe here:
+    near-tied low scores can reorder across independent BLAS matmuls (~1 ULP), so the real invariant
+    is identical uid set + per-uid scores within tolerance (not the exact order)."""
+    da, db = dict(a), dict(b)
+    assert da.keys() == db.keys()
+    for u in da:
+        assert da[u] == pytest.approx(db[u], abs=tol)
+
+
 def test_li_accessible_cache_reuse_is_consistent():
     corpus, r = _fitted()
     acc = {p.uid for p in corpus.all_premises}
@@ -153,7 +163,8 @@ def test_li_accessible_cache_reuse_is_consistent():
     first = r.retrieve(q, acc, 6)          # builds the gather cache
     second = r.retrieve(q, acc, 6)         # same object -> cache hit
     third = r.retrieve(q, {u for u in acc}, 6)   # fresh equal object -> cache rebuild
-    assert first == second == third
+    _assert_consistent_ranking(first, second)
+    _assert_consistent_ranking(first, third)
 
 
 def test_li_persistence_roundtrip(tmp_path):
@@ -171,7 +182,7 @@ def test_li_persistence_roundtrip(tmp_path):
 
     all_uids = {p.uid for p in corpus.all_premises}
     q = "x : α ⊢ le_refl x"
-    assert r1.retrieve(q, all_uids, 6) == r2.retrieve(q, all_uids, 6)
+    _assert_consistent_ranking(r1.retrieve(q, all_uids, 6), r2.retrieve(q, all_uids, 6))
 
 
 def test_li_index_corruption_detected(tmp_path):

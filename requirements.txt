@@ -20,6 +20,12 @@ safetensors        # checkpoint weights format
 # --- Late interaction (ProofLens-LI) ---
 pylate
 
+# --- Fine-tuning data prep (hard-negative mining) ---
+# Fast, vectorised BM25 used ONLY to mine hard negatives for training triplets
+# (~26 ms/query vs ~27 s with rank_bm25 over the accessible set). The eval BM25
+# baseline keeps rank_bm25 (calibrated); bm25s never touches evaluation.
+bm25s
+
 # --- Data / benchmark ---
 # lean-dojo               # confirm exact package + version for Benchmark 4 access
 huggingface-hub

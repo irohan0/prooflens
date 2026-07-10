@@ -1,0 +1,25 @@
+# Fine-tune ProofLens-LI (ColBERT) on the RANDOM split — split-matched (eval only on random/test).
+# Base = the validated off-the-shelf GTE-ModernColBERT; lengths pinned to eval (Phase-11 locked:
+# query_length 384 recovers the 26% state truncation; document_length 300).
+name: li_ft_random
+
+base_model:
+  hf_id: lightonai/GTE-ModernColBERT-v1
+  path: ${MODELS_DIR}/lightonai__GTE-ModernColBERT-v1
+  query_length: 384
+  document_length: 300
+
+train:
+  pairs: ${SCRATCH}/prooflens/pairs/random_bm25_train.jsonl      # scripts/build_pairs.py (bm25 hard)
+  val_pairs: ${SCRATCH}/prooflens/pairs/random_bm25_val.jsonl    # for best-checkpoint selection
+  epochs: 1
+  batch_size: 32            # as large as the L40S allows -> more in-batch negatives (right-size)
+  lr: 3.0e-6                # conservative ColBERT LR; confirm on a --limit trial first
+  warmup_ratio: 0.05
+  bf16: true
+  seed: 42
+  logging_steps: 100
+  eval_steps: 500
+  save_steps: 500
+
+output_dir: ${SCRATCH}/prooflens/checkpoints/li_ft_random_bm25
