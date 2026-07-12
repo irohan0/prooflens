@@ -1,0 +1,29 @@
+# Evaluate the matched single-vector control on NOVEL_PREMISES (split-matched). Same as
+# dense_sv_ft_random but the novel checkpoint / index / split. Its random->novel gap, measured here,
+# is the airtight single-vector baseline for the thesis's generalisation comparison.
+name: dense_sv_ft_novel
+retriever: dense
+
+model:
+  hf_id: Alibaba-NLP/gte-modernbert-base
+  path: ${SCRATCH}/prooflens/checkpoints/sv_ft_novel
+  encoder: sentence_transformer
+  premise_text: full_name_code
+  max_length: 512
+  batch_size: 64
+
+index:
+  dir: ${SCRATCH}/prooflens/indices/sv_ft_novel
+
+data:
+  corpus_path: ${DATA_ROOT}/corpus.jsonl
+  splits_dir: ${DATA_ROOT}/
+  split_file: test.json
+  accessibility: computed
+
+eval:
+  k_list: [1, 10]
+  retrieve_k: 100
+  splits: [novel_premises]
+
+seed: 42

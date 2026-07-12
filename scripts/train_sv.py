@@ -1,18 +1,20 @@
-"""Fine-tune the late-interaction (ColBERT) retriever on Lean triplets (Phase 13).
+"""Fine-tune the MATCHED single-vector control on the same Lean triplets (Phase 15).
 
-Consumes the Phase-12 pairs JSONL (`{"query","positive","negatives":[...]}`), explodes it to
-`(query, positive, negative)` triplets, and fine-tunes a PyLate ColBERT via the ST trainer with the
-in-batch + explicit-hard-negative Contrastive loss. Writes a checkpoint the
-*unchanged* `LateInteractionRetriever` can load, plus a `training_meta.json` provenance sidecar.
+The single-vector counterpart to `scripts/train_li.py`: it consumes the **identical** Phase-12
+triplets and trains with the **same budget** and the **same base lineage** (`gte-modernbert-base`,
+the ModernBERT that GTE-ModernColBERT is built on), but with **mean-pooled cosine** — a
+`SentenceTransformer` + `MultipleNegativesRankingLoss` (in-batch + the explicit hard negative) —
+instead of ColBERT MaxSim. So the ONLY difference vs the LI run is the matching mechanism
+(single-vector pooling vs multi-vector late interaction) → it isolates whether *late interaction*,
+not just fine-tuning, is what shrinks the random→novel gap.
 
-Lengths are pinned to eval (`query_length=384`, `document_length=300` — Phase-11 locked). PyLate /
-torch / datasets are imported lazily so this module and its hermetic tests don't require them.
+Evaluated through the SAME frozen harness via `dense.py`'s `sentence_transformer` encoder option
+(exact cosine over the accessible set) — identical metrics/accessibility to every other retriever.
 
-    python scripts/train_li.py --config configs/train/li_ft_random.yaml
-    python scripts/train_li.py --config configs/train/li_ft_random.yaml --limit 2000   # quick trial
+    python scripts/train_sv.py --config configs/train/sv_ft_random.yaml
+    python scripts/train_sv.py --config configs/train/sv_ft_random.yaml --limit 10000   # trial
 
-NOTE: confirm the installed PyLate training API on first cluster use (losses.Contrastive dataset
-columns, utils.ColBERTCollator, SentenceTransformerTrainer args); adapt here if the version differs.
+torch / sentence-transformers / datasets are imported lazily (cluster-only).
 """
 
 from __future__ import annotations
@@ -30,7 +32,7 @@ from prooflens.eval.evaluate import _git_commit
 from prooflens.utils.logging import get_logger
 from prooflens.utils.seed import set_global_seed
 
-log = get_logger("train_li")
+log = get_logger("train_sv")
 
 
 def load_config(path: str) -> dict:
@@ -42,12 +44,7 @@ def _expand(v):
     return os.path.expandvars(v) if isinstance(v, str) else v
 
 
-# `load_triplet_records` lives in prooflens.data.pairs (shared with train_sv.py); re-exported above
-# so tests and callers can still use `train_li.load_triplet_records`.
-
-
 def _read_meta(pairs_path: str) -> dict | None:
-    """The Phase-12 provenance sidecar written next to the pairs JSONL, if present."""
     p = Path(pairs_path).parent / (Path(pairs_path).stem + ".meta.json")
     if not p.exists():
         return None
@@ -57,21 +54,17 @@ def _read_meta(pairs_path: str) -> dict | None:
         return None
 
 
-# -- training (lazy heavy imports) ----------------------------------------------------------------
-
 def train(config: dict, limit: int | None = None) -> str:
     tr = config["train"]
     if tr.get("use_cpu", False):
-        # Hide CUDA BEFORE torch is imported: on Transformers v5+ the trainer still grabs a visible
-        # GPU even with use_cpu=True, which fails on a busy login-node GPU. This is torch's own
-        # recommended way to force CPU. Real GPU runs leave use_cpu unset -> CUDA stays visible.
-        os.environ["CUDA_VISIBLE_DEVICES"] = ""
+        os.environ["CUDA_VISIBLE_DEVICES"] = ""      # force CPU before torch import (login trial)
 
     from datasets import Dataset
-    from pylate import losses, models, utils
     from sentence_transformers import (
+        SentenceTransformer,
         SentenceTransformerTrainer,
         SentenceTransformerTrainingArguments,
+        losses,
     )
 
     base = config["base_model"]
@@ -79,8 +72,7 @@ def train(config: dict, limit: int | None = None) -> str:
     set_global_seed(seed)
 
     base_path = _expand(base.get("path")) or base.get("hf_id")
-    query_length = base.get("query_length", 384)
-    document_length = base.get("document_length", 300)
+    max_length = base.get("max_length", 512)
     output_dir = _expand(config["output_dir"])
     pairs_path = _expand(tr["pairs"])
     val_path = _expand(tr.get("val_pairs")) if tr.get("val_pairs") else None
@@ -101,19 +93,12 @@ def train(config: dict, limit: int | None = None) -> str:
             n_val = len(val_records)
             log.info("val triplets: %d (from %s)", n_val, Path(val_path).name)
 
-    # Force the model onto CPU for the login-node API-confirmation trial: PyLate's ColBERT moves the
-    # model to CUDA at construction (before the trainer's use_cpu applies), which fails on a busy
-    # login-node GPU. On a real GPU allocation use_cpu is unset -> device=None -> auto-detect CUDA.
     device = "cpu" if tr.get("use_cpu", False) else None
-    log.info("loading base ColBERT: %s (q=%d, d=%d, device=%s)",
-             base_path, query_length, document_length, device or "auto")
-    model = models.ColBERT(
-        model_name_or_path=base_path,
-        query_length=query_length,
-        document_length=document_length,
-        device=device,
-    )
-    loss = losses.Contrastive(model=model)
+    log.info("loading base single-vector model: %s (max_len=%d, device=%s)",
+             base_path, max_length, device or "auto")
+    model = SentenceTransformer(base_path, device=device)
+    model.max_seq_length = max_length
+    loss = losses.MultipleNegativesRankingLoss(model)      # in-batch + the explicit hard negative
 
     do_eval = eval_ds is not None
     args = SentenceTransformerTrainingArguments(
@@ -121,17 +106,17 @@ def train(config: dict, limit: int | None = None) -> str:
         num_train_epochs=tr.get("epochs", 1),
         per_device_train_batch_size=tr.get("batch_size", 32),
         per_device_eval_batch_size=tr.get("batch_size", 32),
-        learning_rate=float(tr.get("lr", 3.0e-6)),
+        learning_rate=float(tr.get("lr", 2.0e-5)),
         warmup_ratio=tr.get("warmup_ratio", 0.05),
         bf16=tr.get("bf16", True),
         fp16=tr.get("fp16", False),
-        use_cpu=tr.get("use_cpu", False),   # CPU API-confirmation trial (login node, no GPU needed)
+        use_cpu=tr.get("use_cpu", False),
         seed=seed,
-        logging_steps=tr.get("logging_steps", 100),
+        logging_steps=tr.get("logging_steps", 500),
         save_strategy="steps" if do_eval else "epoch",
-        save_steps=tr.get("save_steps", 500),
+        save_steps=tr.get("save_steps", 5000),
         eval_strategy="steps" if do_eval else "no",
-        eval_steps=tr.get("eval_steps", 500),
+        eval_steps=tr.get("eval_steps", 5000),
         save_total_limit=2,
         load_best_model_at_end=do_eval,
         metric_for_best_model="eval_loss" if do_eval else None,
@@ -140,27 +125,21 @@ def train(config: dict, limit: int | None = None) -> str:
     )
 
     trainer = SentenceTransformerTrainer(
-        model=model,
-        args=args,
-        train_dataset=train_ds,
-        eval_dataset=eval_ds,
-        loss=loss,
-        data_collator=utils.ColBERTCollator(model.tokenize),
+        model=model, args=args, train_dataset=train_ds, eval_dataset=eval_ds, loss=loss,
     )
-    log.info("training … (epochs=%s, batch=%s, lr=%s, bf16=%s)",
-             tr.get("epochs", 1), tr.get("batch_size", 32), tr.get("lr", 3.0e-6),
-             tr.get("bf16", True))
+    log.info("training single-vector control … (epochs=%s, batch=%s, lr=%s)",
+             tr.get("epochs", 1), tr.get("batch_size", 32), tr.get("lr", 2.0e-5))
     trainer.train()
 
     Path(output_dir).mkdir(parents=True, exist_ok=True)
     model.save_pretrained(output_dir)
 
     meta = {
-        "tool": "scripts/train_li.py",
+        "tool": "scripts/train_sv.py",
         "config_name": config.get("name"),
+        "architecture": "single-vector (SentenceTransformer, mean-pool, MultipleNegativesRanking)",
         "base_model": base_path,
-        "query_length": query_length,
-        "document_length": document_length,
+        "max_length": max_length,
         "pairs": pairs_path,
         "pairs_meta": _read_meta(pairs_path),
         "val_pairs": val_path,
@@ -168,7 +147,7 @@ def train(config: dict, limit: int | None = None) -> str:
         "n_val_triplets": n_val,
         "epochs": tr.get("epochs", 1),
         "batch_size": tr.get("batch_size", 32),
-        "lr": float(tr.get("lr", 3.0e-6)),
+        "lr": float(tr.get("lr", 2.0e-5)),
         "warmup_ratio": tr.get("warmup_ratio", 0.05),
         "seed": seed,
         "limit": limit,
@@ -178,15 +157,14 @@ def train(config: dict, limit: int | None = None) -> str:
     (Path(output_dir) / "training_meta.json").write_text(
         json.dumps(meta, indent=2), encoding="utf-8"
     )
-    log.info("saved fine-tuned ColBERT + training_meta.json -> %s", output_dir)
+    log.info("saved fine-tuned single-vector model + training_meta.json -> %s", output_dir)
     return output_dir
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="Fine-tune the late-interaction retriever on Lean.")
-    ap.add_argument("--config", required=True, help="a configs/train/*.yaml file")
-    ap.add_argument("--limit", type=int, default=None,
-                    help="use only the first N triplets (quick trial to right-size epochs/LR)")
+    ap = argparse.ArgumentParser(description="Fine-tune the matched single-vector control on Lean.")
+    ap.add_argument("--config", required=True, help="a configs/train/sv_*.yaml file")
+    ap.add_argument("--limit", type=int, default=None, help="use only the first N triplets (trial)")
     args = ap.parse_args()
     train(load_config(args.config), limit=args.limit)
 

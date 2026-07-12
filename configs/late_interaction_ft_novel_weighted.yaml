@@ -1,0 +1,35 @@
+# Fine-tuned ProofLens-LI on NOVEL_PREMISES — symbol weighting ON (the trained-model ablation).
+# Identical to late_interaction_ft_novel.yaml except symbol_weighting.enabled: true and the name.
+# SAME index.dir as OFF -> reuses the cached novel FT index (weighting is query-side only) -> fast.
+name: late_interaction_ft_novel_weighted
+retriever: late_interaction
+
+model:
+  hf_id: lightonai/GTE-ModernColBERT-v1
+  path: ${SCRATCH}/prooflens/checkpoints/li_ft_novel_bm25
+  loader: pylate.models.ColBERT
+  query_length: 384
+  document_length: 300
+  batch_size: 32
+
+index:
+  dir: ${SCRATCH}/prooflens/indices/li_ft_novel              # SAME as OFF -> reuse the cached FT index
+  backend: exact-maxsim
+
+data:
+  corpus_path: ${DATA_ROOT}/corpus.jsonl
+  splits_dir: ${DATA_ROOT}/
+  split_file: test.json
+  accessibility: computed
+
+symbol_weighting:
+  enabled: true
+  symbol_weight: 4.0        # Phase-11 sweep best; re-checked on the trained model
+  default_weight: 1.0
+
+eval:
+  k_list: [1, 10]
+  retrieve_k: 100
+  splits: [novel_premises]
+
+seed: 42

@@ -1,0 +1,26 @@
+# Matched single-vector control — RANDOM split (Phase 15). Trained on the SAME triplets, budget,
+# and base lineage as li_ft_random, but single-vector (SentenceTransformer + MultipleNegatives-
+# RankingLoss) instead of ColBERT. The only difference vs the LI run is the matching mechanism.
+# (lr is the standard single-vector value 2e-5, not ColBERT's 3e-6 — each architecture uses its own
+# best-practice LR so neither is handicapped; same data / epochs / batch.)
+name: sv_ft_random
+
+base_model:
+  hf_id: Alibaba-NLP/gte-modernbert-base
+  path: ${MODELS_DIR}/Alibaba-NLP__gte-modernbert-base
+  max_length: 512
+
+train:
+  pairs: ${SCRATCH}/prooflens/pairs/random_bm25_train.jsonl      # SAME triplets as li_ft_random
+  val_pairs: ${SCRATCH}/prooflens/pairs/random_bm25_val.jsonl
+  epochs: 1
+  batch_size: 32           # matched to LI (same in-batch-negative count)
+  lr: 2.0e-5
+  warmup_ratio: 0.05
+  bf16: true
+  seed: 42
+  logging_steps: 500
+  eval_steps: 5000
+  save_steps: 5000
+
+output_dir: ${SCRATCH}/prooflens/checkpoints/sv_ft_random

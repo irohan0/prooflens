@@ -38,6 +38,7 @@ from pathlib import Path
 import numpy as np
 
 from prooflens.retrievers.base import Retriever
+from prooflens.retrievers.bm25 import premise_document
 from prooflens.utils.logging import get_logger
 
 log = get_logger("dense")
@@ -134,6 +135,37 @@ class _ByT5Encoder:
         return np.concatenate(out, axis=0)
 
 
+class _STEncoder:
+    """sentence-transformers single-vector encoder for the **matched control** (mean-pool +
+    L2-normalize). Loads a `SentenceTransformer` checkpoint fine-tuned by `scripts/train_sv.py`;
+    `encode(texts)` returns an L2-normalised float32 `[n, d]` array — the SAME output contract as
+    `_ByT5Encoder`, so `DenseRetriever.retrieve` (exact cosine over the accessible set) is byte-for-
+    byte unchanged. torch/sentence-transformers are imported lazily (cluster-only).
+    """
+
+    def __init__(self, model_path: str, max_length: int = 512, batch_size: int = 64,
+                 device: str | None = None) -> None:
+        from sentence_transformers import SentenceTransformer
+
+        self.model = SentenceTransformer(model_path, device=device)
+        self.model.max_seq_length = max_length
+        self.max_length = max_length
+        self.batch_size = batch_size
+        self.dim = int(self.model.get_sentence_embedding_dimension())
+        self.n_encoded = 0
+        self.n_truncated = 0            # ST truncates silently; not tracked
+
+    def encode(self, texts: list[str]) -> np.ndarray:
+        if not texts:
+            return np.zeros((0, self.dim), dtype=np.float32)
+        emb = self.model.encode(
+            texts, batch_size=self.batch_size, normalize_embeddings=True,
+            convert_to_numpy=True, show_progress_bar=False,
+        )
+        self.n_encoded += len(texts)
+        return np.ascontiguousarray(emb, dtype=np.float32)
+
+
 class DenseRetriever(Retriever):
     """ReProver ByT5-small dense retriever. Encodes every premise once (persisted to the index
     dir), then at query time encodes the state and scores the accessible premises by exact cosine.
@@ -143,12 +175,17 @@ class DenseRetriever(Retriever):
 
     def __init__(self, model_path: str | None = None, max_length: int = 1024,
                  batch_size: int = 64, index_dir: str | None = None,
-                 encoder: object | None = None, device: str | None = None) -> None:
+                 encoder: object | None = None, device: str | None = None,
+                 encoder_type: str = "byt5", premise_text: str = "reprover_serialize") -> None:
         self.model_path = model_path
         self.max_length = max_length
         self.batch_size = batch_size
         self.index_dir = index_dir
         self.device = device
+        # encoder_type: "byt5" (ReProver, default) | "sentence_transformer" (the matched control).
+        # premise_text: "reprover_serialize" (default) | "full_name_code" (matches LI/pairs text).
+        self.encoder_type = encoder_type
+        self.premise_text = premise_text
         self._encoder = encoder
         self._emb: np.ndarray | None = None      # [N, d] float32, L2-normalised premise vectors
         self._uids: list[str] = []
@@ -158,10 +195,23 @@ class DenseRetriever(Retriever):
         if self._encoder is None:
             if not self.model_path:
                 raise RuntimeError("DenseRetriever needs model_path or an injected encoder")
-            self._encoder = _ByT5Encoder(
-                self.model_path, self.max_length, self.batch_size, self.device
-            )
+            if self.encoder_type == "sentence_transformer":
+                self._encoder = _STEncoder(
+                    self.model_path, self.max_length, self.batch_size, self.device
+                )
+            else:
+                self._encoder = _ByT5Encoder(
+                    self.model_path, self.max_length, self.batch_size, self.device
+                )
         return self._encoder
+
+    def _premise_text(self, full_name: str, code: str) -> str:
+        """Serialize a premise for indexing. ReProver's `<a>`-marked form by default; the matched
+        single-vector control uses `full_name + code` so its premise text matches the LI/pairs text
+        (a like-for-like comparison of the matching mechanism, not the representation)."""
+        if self.premise_text == "full_name_code":
+            return premise_document(full_name, code)
+        return serialize_premise(full_name, code)
 
     # -- index ---------------------------------------------------------------------------------
     def _paths(self) -> tuple[Path, Path, Path] | None:
@@ -182,7 +232,7 @@ class DenseRetriever(Retriever):
 
         self._uids = [p.uid for p in corpus.all_premises]
         self._uid_to_idx = {uid: i for i, uid in enumerate(self._uids)}
-        texts = [serialize_premise(p.full_name, p.code) for p in corpus.all_premises]
+        texts = [self._premise_text(p.full_name, p.code) for p in corpus.all_premises]
         enc = self._get_encoder()
         log.info("dense: encoding %d premises (batch=%d, max_length=%d)",
                  len(texts), self.batch_size, self.max_length)
@@ -205,6 +255,8 @@ class DenseRetriever(Retriever):
             "n": len(self._uids),
             "dim": int(self._emb.shape[1]) if self._emb is not None and self._emb.size else None,
             "max_length": self.max_length,
+            "encoder_type": self.encoder_type,
+            "premise_text": self.premise_text,
             "dtype": str(self._emb.dtype) if self._emb is not None else None,
         }), encoding="utf-8")
 

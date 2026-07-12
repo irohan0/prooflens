@@ -18,8 +18,8 @@ train:
   warmup_ratio: 0.05
   bf16: true
   seed: 42
-  logging_steps: 100
-  eval_steps: 500
-  save_steps: 500
+  logging_steps: 500
+  eval_steps: 5000        # ~6 val evals over the ~31k-step epoch (val is 17.8k rows -> keep it cheap)
+  save_steps: 5000        # must match eval_steps for load_best_model_at_end
 
 output_dir: ${SCRATCH}/prooflens/checkpoints/li_ft_random_bm25

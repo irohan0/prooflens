@@ -30,6 +30,7 @@ tests do not require it; the eval BM25 keeps `rank_bm25` (calibrated), untouched
 from __future__ import annotations
 
 import hashlib
+import json
 import random
 from collections import Counter
 from collections.abc import Callable, Iterator
@@ -234,3 +235,27 @@ def build_triplets(corpus: Corpus, split_path: str, *, negatives: str = "bm25", 
                     "positive": text(g),
                     "negatives": [text(u) for u in neg_uids],
                 }
+
+
+def load_triplet_records(path: str, max_samples: int | None = None) -> Iterator[dict]:
+    """Yield exploded `{"query","positive","negative"}` rows from a pairs JSONL (built above).
+
+    Each source row `{"query","positive","negatives":[...]}` yields one triplet per negative — the
+    universally-compatible contrastive format (in-batch negatives add the rest at train time). Rows
+    with no negative are skipped; `max_samples` bounds the emitted triplets (the `--limit` trial).
+    Shared by `train_li.py` and `train_sv.py` so both consume identical triplets — the like-for-like
+    training input for the matched control.
+    """
+    n = 0
+    with open(path, encoding="utf-8") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            row = json.loads(line)
+            query, positive = row["query"], row["positive"]
+            for neg in row.get("negatives", []):
+                yield {"query": query, "positive": positive, "negative": neg}
+                n += 1
+                if max_samples is not None and n >= max_samples:
+                    return

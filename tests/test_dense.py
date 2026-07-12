@@ -154,6 +154,40 @@ def test_dense_index_corruption_detected(tmp_path):
         r2.build_index(corpus)
 
 
+# -- premise-text routing (the matched single-vector control uses full_name+code, not ReProver) ---
+
+class RecordingEncoder(FakeEncoder):
+    """FakeEncoder that records the exact texts it was asked to encode (to assert which premise
+    serialization build_index used)."""
+
+    def __init__(self, dim: int = 48) -> None:
+        super().__init__(dim)
+        self.seen: list[str] = []
+
+    def encode(self, texts: list[str]) -> np.ndarray:
+        self.seen.extend(texts)
+        return super().encode(texts)
+
+
+def test_premise_text_option_selects_serialization():
+    from prooflens.retrievers.bm25 import premise_document
+
+    corpus = load_corpus(str(FIX / "corpus.jsonl"))
+    prem = corpus.all_premises
+
+    # matched single-vector control: full_name + code (the LI/pairs text), NOT ReProver's markers
+    rec_fnc = RecordingEncoder()
+    DenseRetriever(encoder=rec_fnc, premise_text="full_name_code").build_index(corpus)
+    assert rec_fnc.seen == [premise_document(p.full_name, p.code) for p in prem]
+    assert all("<a>" not in t for t in rec_fnc.seen)
+
+    # default (ReProver) is unchanged -> <a>-marked serialization
+    rec_rp = RecordingEncoder()
+    DenseRetriever(encoder=rec_rp).build_index(corpus)          # premise_text defaults to reprover
+    assert rec_rp.seen == [serialize_premise(p.full_name, p.code) for p in prem]
+    assert any("<a>" in t for t in rec_rp.seen)
+
+
 # -- real ByT5 checkpoint smoke (opt-in; runs on the cluster) ---------------------------------
 
 _HAS_TORCH = (
@@ -178,3 +212,20 @@ def test_reprover_encoder_real_smoke():
     assert np.allclose(np.linalg.norm(embs, axis=1), 1.0, atol=1e-4)  # unit-norm (F.normalize)
     two = enc.encode(["same text", "same text"])
     assert float(two[0] @ two[1]) == pytest.approx(1.0, abs=1e-4)     # identical text -> cosine 1
+
+
+@pytest.mark.skipif(
+    not (importlib.util.find_spec("sentence_transformers") and os.environ.get("PROOFLENS_SV_SMOKE")
+         and os.environ.get("MODELS_DIR")),
+    reason="single-vector encoder smoke: set PROOFLENS_SV_SMOKE=1 with sentence-transformers",
+)
+def test_st_encoder_real_smoke():
+    from prooflens.retrievers.dense import _STEncoder
+
+    path = str(Path(os.environ["MODELS_DIR"]) / "Alibaba-NLP__gte-modernbert-base")
+    enc = _STEncoder(path, max_length=128, batch_size=4, device="cpu")
+    embs = enc.encode(["a b : α ⊢ a + b = b + a", "add_comm : a + b = b + a"])
+    assert embs.shape == (2, enc.dim)
+    assert np.allclose(np.linalg.norm(embs, axis=1), 1.0, atol=1e-4)  # normalize_embeddings=True
+    two = enc.encode(["same text", "same text"])
+    assert float(two[0] @ two[1]) == pytest.approx(1.0, abs=1e-4)

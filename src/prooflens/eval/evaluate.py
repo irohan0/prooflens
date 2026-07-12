@@ -61,6 +61,8 @@ def build_retriever(config: dict):
             max_length=model.get("max_length", 1024),
             batch_size=model.get("batch_size", 64),
             index_dir=index_dir,
+            encoder_type=model.get("encoder", "byt5"),
+            premise_text=model.get("premise_text", "reprover_serialize"),
         )
     if rtype == "late_interaction":
         from prooflens.retrievers.late_interaction import LateInteractionRetriever

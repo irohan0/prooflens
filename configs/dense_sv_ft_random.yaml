@@ -1,0 +1,30 @@
+# Evaluate the matched single-vector control on RANDOM — through the SAME frozen dense harness.
+# retriever: dense with the sentence_transformer encoder and full_name_code premise text (so its
+# premise representation matches the LI/pairs text). retrieve() = exact cosine over accessible,
+# byte-for-byte identical to every other retriever -> a like-for-like LI-vs-single-vector comparison.
+name: dense_sv_ft_random
+retriever: dense
+
+model:
+  hf_id: Alibaba-NLP/gte-modernbert-base
+  path: ${SCRATCH}/prooflens/checkpoints/sv_ft_random     # the fine-tuned single-vector checkpoint
+  encoder: sentence_transformer
+  premise_text: full_name_code
+  max_length: 512
+  batch_size: 64
+
+index:
+  dir: ${SCRATCH}/prooflens/indices/sv_ft_random
+
+data:
+  corpus_path: ${DATA_ROOT}/corpus.jsonl
+  splits_dir: ${DATA_ROOT}/
+  split_file: test.json
+  accessibility: computed
+
+eval:
+  k_list: [1, 10]
+  retrieve_k: 100
+  splits: [random]           # split-matched
+
+seed: 42
