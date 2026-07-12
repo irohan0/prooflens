@@ -34,18 +34,33 @@ def _percent_yaxis(ax) -> None:
     ax.yaxis.set_major_formatter(mticker.FuncFormatter(lambda v, _pos: f"{v * 100:.0f}"))
 
 # -- presentation config ----------------------------------------------------------------------
-METHOD_ORDER = ["bm25", "dense_reprover", "late_interaction", "late_interaction_weighted"]
-METHOD_LABELS = {
-    "bm25": "BM25",
-    "dense_reprover": "Dense\nReProver",
-    "late_interaction": "LI\n(OFF)",
-    "late_interaction_weighted": "LI\n(ON)",
-}
+# A "system" is a retriever we compare. Fine-tuned systems are SPLIT-MATCHED — a separate checkpoint
+# (and therefore a separate config name) per split — so a system maps split -> config_name.
+SYSTEMS: list[tuple[str, str, str, dict[str, str]]] = [
+    ("bm25", "BM25", "sparse",
+     {"random": "bm25", "novel_premises": "bm25"}),
+    ("dense", "Dense\nReProver", "dense 1-vec",
+     {"random": "dense_reprover", "novel_premises": "dense_reprover"}),
+    ("li_off", "LI off-shelf\n(OFF)", "late-interaction",
+     {"random": "late_interaction", "novel_premises": "late_interaction"}),
+    ("li_on", "LI off-shelf\n(ON)", "late-interaction",
+     {"random": "late_interaction_weighted", "novel_premises": "late_interaction_weighted"}),
+    ("ft_li_off", "ProofLens-LI\nfine-tuned (OFF)", "late-interaction (FT)",
+     {"random": "late_interaction_ft_random", "novel_premises": "late_interaction_ft_novel"}),
+    ("ft_li_on", "ProofLens-LI\nfine-tuned (ON)", "late-interaction (FT)",
+     {"random": "late_interaction_ft_random_weighted",
+      "novel_premises": "late_interaction_ft_novel_weighted"}),
+]
+SYS_ORDER = [s[0] for s in SYSTEMS]
+SYS_LABELS = {s[0]: s[1] for s in SYSTEMS}
+SYS_TYPES = {s[0]: s[2] for s in SYSTEMS}
+SYS_CFG = {s[0]: s[3] for s in SYSTEMS}
+
 SPLIT_ORDER = ["random", "novel_premises"]
 SPLIT_LABELS = {"random": "random", "novel_premises": "novel_premises"}
 SPLIT_COLORS = {"random": "#4C72B0", "novel_premises": "#DD8452"}
-# The one leaked cell (random-trained ReProver checkpoint evaluated on novel_premises-test).
-LEAKED = {("dense_reprover", "novel_premises")}
+# The one leaked cell (random-trained public ReProver checkpoint evaluated on novel_premises-test).
+LEAKED = {("dense", "novel_premises")}
 
 # Published-literature reference numbers (citations, not our measurements). Fractions.
 #   LeanDojo 2306.15626 (Lean 3, split-matched checkpoints) + Petrovcic 2510.23637 (Lean 4 random).
@@ -77,9 +92,20 @@ def _fval(row: dict, key: str) -> float | None:
         return None
 
 
+def _row(latest: dict, system: str, split: str) -> dict:
+    """Resolve a (system, split) to its summary.csv row via the system's per-split config name."""
+    cfg = SYS_CFG.get(system, {}).get(split)
+    return latest.get((cfg, split), {}) if cfg else {}
+
+
+def _get(latest: dict, system: str, split: str, metric: str) -> float | None:
+    return _fval(_row(latest, system, split), metric)
+
+
 def _methods_present(latest: dict) -> list[str]:
-    present = {k[0] for k in latest}
-    return [m for m in METHOD_ORDER if m in present] + sorted(present - set(METHOD_ORDER))
+    """Systems that have at least one row in summary.csv, in presentation order."""
+    return [s for s in SYS_ORDER
+            if any(_row(latest, s, sp) for sp in SPLIT_ORDER)]
 
 
 def _annotate(ax, bars, fmt="{:.1f}") -> None:
@@ -105,14 +131,14 @@ def _save(fig, out_dir: Path, stem: str) -> list[Path]:
 def plot_recall_at_k(latest: dict, out_dir: Path) -> list[Path]:
     methods = _methods_present(latest)
     metrics = ("R@1", "R@10")
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4.6), squeeze=False)
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5.0), squeeze=False)
     width = 0.38
     x = list(range(len(methods)))
     for col, metric in enumerate(metrics):
         ax = axes[0][col]
         top = 0.0
         for si, split in enumerate(SPLIT_ORDER):
-            vals = [_fval(latest.get((m, split), {}), metric) or 0.0 for m in methods]
+            vals = [_get(latest, m, split, metric) or 0.0 for m in methods]
             top = max(top, max(vals))
             pos = [xi + (si - 0.5) * width for xi in x]
             bars = ax.bar(pos, vals, width, label=SPLIT_LABELS[split], color=SPLIT_COLORS[split])
@@ -125,14 +151,15 @@ def plot_recall_at_k(latest: dict, out_dir: Path) -> list[Path]:
                                 xytext=(0, 11), textcoords="offset points", rotation=0)
             _annotate(ax, bars)
         ax.set_xticks(x)
-        ax.set_xticklabels([METHOD_LABELS.get(m, m) for m in methods])
+        ax.set_xticklabels([SYS_LABELS.get(m, m) for m in methods], fontsize=8)
         ax.set_ylim(0, top * 1.25)
         ax.set_ylabel(f"{metric} (%)")
-        ax.set_title(f"{metric} per method, by split")
+        ax.set_title(f"{metric} per system, by split")
         ax.legend(title="split", loc="upper right")
         ax.grid(axis="y", alpha=0.3)
         _percent_yaxis(ax)
-    fig.suptitle("Recall@k on LeanDojo Benchmark 4 (Lean 4)", fontweight="bold")
+    fig.suptitle("Recall@k on LeanDojo Benchmark 4 (Lean 4) — fine-tuning lifts late interaction "
+                 "past BM25", fontweight="bold")
     fig.tight_layout()
     return _save(fig, out_dir, "recall_at_k")
 
@@ -143,17 +170,17 @@ def plot_generalisation_gap(latest: dict, out_dir: Path) -> list[Path]:
     the published *clean* novel (hatched) — showing the trained model's real drop vs the untrained
     methods' rise."""
     methods = _methods_present(latest)
-    fig, ax = plt.subplots(figsize=(9, 5))
+    fig, ax = plt.subplots(figsize=(11, 5.4))
     width = 0.38
     x = list(range(len(methods)))
-    rnd = [_fval(latest.get((m, "random"), {}), "R@10") or 0.0 for m in methods]
+    rnd = [_get(latest, m, "random", "R@10") or 0.0 for m in methods]
     nov, hatched = [], []
     for m in methods:
         if (m, "novel_premises") in LEAKED:
             nov.append(DENSE_CLEAN_NOVEL_R10)          # substitute published clean-novel
             hatched.append(True)
         else:
-            nov.append(_fval(latest.get((m, "novel_premises"), {}), "R@10") or 0.0)
+            nov.append(_get(latest, m, "novel_premises", "R@10") or 0.0)
             hatched.append(False)
     b1 = ax.bar([xi - width / 2 for xi in x], rnd, width, label="random",
                 color=SPLIT_COLORS["random"])
@@ -169,11 +196,12 @@ def plot_generalisation_gap(latest: dict, out_dir: Path) -> list[Path]:
                         ha="center", va="bottom", fontsize=7, color="crimson",
                         xytext=(0, 12), textcoords="offset points")
     ax.set_xticks(x)
-    ax.set_xticklabels([METHOD_LABELS.get(m, m) for m in methods])
+    ax.set_xticklabels([SYS_LABELS.get(m, m) for m in methods], fontsize=8)
     ax.set_ylabel("R@10 (%)")
     ax.set_ylim(0, max(max(rnd), max(nov)) * 1.3)
     ax.set_title("Generalisation: random → novel_premises (R@10)\n"
-                 "trained dense drops; untrained methods (BM25, LI) do not", fontweight="bold")
+                 "the single-vector dense drops ~28%; fine-tuned late interaction barely moves",
+                 fontweight="bold")
     ax.legend(loc="upper right")
     ax.grid(axis="y", alpha=0.3)
     _percent_yaxis(ax)
@@ -184,12 +212,12 @@ def plot_generalisation_gap(latest: dict, out_dir: Path) -> list[Path]:
 # -- 3. MRR comparison ------------------------------------------------------------------------
 def plot_mrr(latest: dict, out_dir: Path) -> list[Path]:
     methods = _methods_present(latest)
-    fig, ax = plt.subplots(figsize=(9, 5))
+    fig, ax = plt.subplots(figsize=(11, 5.2))
     width = 0.38
     x = list(range(len(methods)))
     top = 0.0
     for si, split in enumerate(SPLIT_ORDER):
-        vals = [_fval(latest.get((m, split), {}), "MRR") or 0.0 for m in methods]
+        vals = [_get(latest, m, split, "MRR") or 0.0 for m in methods]
         top = max(top, max(vals))
         pos = [xi + (si - 0.5) * width for xi in x]
         bars = ax.bar(pos, vals, width, label=SPLIT_LABELS[split], color=SPLIT_COLORS[split])
@@ -205,10 +233,10 @@ def plot_mrr(latest: dict, out_dir: Path) -> list[Path]:
                         ha="center", va="bottom", fontsize=8, xytext=(0, 1),
                         textcoords="offset points")
     ax.set_xticks(x)
-    ax.set_xticklabels([METHOD_LABELS.get(m, m) for m in methods])
+    ax.set_xticklabels([SYS_LABELS.get(m, m) for m in methods], fontsize=8)
     ax.set_ylim(0, top * 1.25)
     ax.set_ylabel("MRR")
-    ax.set_title("Mean Reciprocal Rank per method, by split", fontweight="bold")
+    ax.set_title("Mean Reciprocal Rank per system, by split", fontweight="bold")
     ax.legend(title="split", loc="upper right")
     ax.grid(axis="y", alpha=0.3)
     fig.tight_layout()
@@ -217,17 +245,22 @@ def plot_mrr(latest: dict, out_dir: Path) -> list[Path]:
 
 # -- 4. ablation panel (LI OFF vs ON) ---------------------------------------------------------
 def plot_ablation(latest: dict, out_dir: Path) -> list[Path]:
-    off, on = "late_interaction", "late_interaction_weighted"
-    if not any((off, s) in latest for s in SPLIT_ORDER):
-        return []
+    """Symbol-anchored weighting OFF vs ON on the **fine-tuned** model (the headline ablation: does
+    the twist still pay after training?). Falls back to the off-the-shelf pair if no FT rows yet."""
+    off, on = "ft_li_off", "ft_li_on"
+    if not any(_row(latest, off, s) for s in SPLIT_ORDER):
+        off, on = "li_off", "li_on"                          # pre-fine-tuning fallback
+        if not any(_row(latest, off, s) for s in SPLIT_ORDER):
+            return []
+    tuned = off == "ft_li_off"
     metrics = ("R@1", "R@10", "MRR")
-    fig, axes = plt.subplots(1, 2, figsize=(11, 4.6), squeeze=False)
+    fig, axes = plt.subplots(1, 2, figsize=(11, 4.8), squeeze=False)
     width = 0.38
     x = list(range(len(metrics)))
     for col, split in enumerate(SPLIT_ORDER):
         ax = axes[0][col]
-        off_v = [_fval(latest.get((off, split), {}), mm) or 0.0 for mm in metrics]
-        on_v = [_fval(latest.get((on, split), {}), mm) or 0.0 for mm in metrics]
+        off_v = [_get(latest, off, split, mm) or 0.0 for mm in metrics]
+        on_v = [_get(latest, on, split, mm) or 0.0 for mm in metrics]
         b1 = ax.bar([xi - width / 2 for xi in x], off_v, width, label="weighting OFF",
                     color="#8C8C8C")
         b2 = ax.bar([xi + width / 2 for xi in x], on_v, width, label="weighting ON",
@@ -236,19 +269,21 @@ def plot_ablation(latest: dict, out_dir: Path) -> list[Path]:
             ax.annotate(f"{b.get_height():.3f}", (b.get_x() + b.get_width() / 2, b.get_height()),
                         ha="center", va="bottom", fontsize=8, xytext=(0, 1),
                         textcoords="offset points")
-        for i in range(len(metrics)):                     # % lift arrows
+        for i in range(len(metrics)):                     # % lift labels
             if off_v[i] > 0:
                 lift = 100 * (on_v[i] - off_v[i]) / off_v[i]
-                ax.annotate(f"+{lift:.0f}%", (i, max(off_v[i], on_v[i])), ha="center",
-                            va="bottom", fontsize=8, color="#2A7F3E", fontweight="bold",
+                ax.annotate(f"{lift:+.1f}%", (i, max(off_v[i], on_v[i])), ha="center",
+                            va="bottom", fontsize=9, color="#2A7F3E", fontweight="bold",
                             xytext=(0, 12), textcoords="offset points")
         ax.set_xticks(x)
         ax.set_xticklabels(metrics)
-        ax.set_ylim(0, max(max(off_v), max(on_v)) * 1.3)
+        ax.set_ylim(0, max(max(off_v), max(on_v)) * 1.32)
         ax.set_title(f"split: {SPLIT_LABELS[split]}")
         ax.legend(loc="upper right")
         ax.grid(axis="y", alpha=0.3)
-    fig.suptitle("Ablation — symbol-anchored token weighting: OFF vs ON", fontweight="bold")
+    fig.suptitle("Ablation — symbol-anchored token weighting: OFF vs ON"
+                 + (" (fine-tuned model — the lift is biggest on novel premises)" if tuned
+                    else " (off-the-shelf)"), fontweight="bold")
     fig.tight_layout()
     return _save(fig, out_dir, "ablation_panel")
 
@@ -263,11 +298,6 @@ def render_comparison_table(latest: dict, out_dir: Path) -> list[Path]:
 
     header = ["System", "Type", "R@1", "R@10", "MRR", "nDCG@10"]
     rows: list[list[str]] = []
-    label = {"bm25": "BM25 (ours)", "dense_reprover": "Dense ReProver (ours)",
-             "late_interaction": "ProofLens-LI OFF (ours)",
-             "late_interaction_weighted": "ProofLens-LI ON (ours)"}
-    typ = {"bm25": "sparse", "dense_reprover": "dense 1-vec",
-           "late_interaction": "late-interaction", "late_interaction_weighted": "late-interaction"}
     for split in SPLIT_ORDER:
         rows.append([f"— split: {split} —", "", "", "", "", ""])
         # published references first
@@ -276,18 +306,19 @@ def render_comparison_table(latest: dict, out_dir: Path) -> list[Path]:
                 r1, r10, mrr = data[split]
                 rows.append([name, "published", pct(r1), pct(r10), dec(mrr), "—"])
         for m in _methods_present(latest):
-            row = latest.get((m, split))
+            row = _row(latest, m, split)
             if not row:
                 continue
             flag = " †" if (m, split) in LEAKED else ""
-            rows.append([label.get(m, m) + flag, typ.get(m, ""),
+            name = SYS_LABELS.get(m, m).replace("\n", " ") + " (ours)" + flag
+            rows.append([name, SYS_TYPES.get(m, ""),
                          pct(_fval(row, "R@1")), pct(_fval(row, "R@10")),
                          dec(_fval(row, "MRR")), dec(_fval(row, "nDCG@10"))])
 
-    fig, ax = plt.subplots(figsize=(10.5, 0.36 * (len(rows) + 1) + 0.85))
+    fig, ax = plt.subplots(figsize=(11.5, 0.36 * (len(rows) + 1) + 0.85))
     ax.axis("off")
     tbl = ax.table(cellText=rows, colLabels=header, loc="upper center", cellLoc="center",
-                   colWidths=[0.28, 0.16, 0.13, 0.13, 0.14, 0.16])
+                   colWidths=[0.34, 0.18, 0.12, 0.12, 0.12, 0.14])
     tbl.auto_set_font_size(False)
     tbl.set_fontsize(9)
     tbl.scale(1, 1.35)
@@ -304,7 +335,7 @@ def render_comparison_table(latest: dict, out_dir: Path) -> list[Path]:
             for j in range(len(header)):
                 tbl[i, j].set_facecolor("#eef6ee")
             tbl[i, 0].set_text_props(ha="left")
-    ax.set_title("ProofLens Phase 1 — standings (ours vs published), LeanDojo Benchmark 4",
+    ax.set_title("ProofLens — standings (ours vs published), LeanDojo Benchmark 4",
                  fontweight="bold", pad=10)
     ax.annotate("R@1/R@10 in %, MRR/nDCG@10 decimals.   † dense novel is cross-split leaked "
                 "(not comparable; published clean R@10 = 27.6).", (0.5, 0.04),

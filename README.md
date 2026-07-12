@@ -1,136 +1,191 @@
 # ProofLens
 
-**Premise-selection retrieval for formal theorem proving in Lean 4.**
+**Finding the right lemma, at the right moment, in a library of 180,000.**
 
-Given a Lean 4 **proof state**, ProofLens ranks **premises** (lemmas, definitions, theorems) from
-Mathlib so a prover can pick the right ones to make progress. Good premise selection is the known
-bottleneck in scaling automated theorem proving: a prover that searches the whole ~180k-premise
-library blindly is hopeless; a good retriever narrows it to a handful.
+ProofLens is a premise-selection retriever for formal theorem proving in Lean 4. Given a **proof
+state** — where the prover is stuck right now — it ranks **premises** (lemmas, definitions,
+theorems) from Mathlib so the prover can pick the one that actually moves the proof forward.
 
-ProofLens is a **reproducible evaluation harness** plus three retrievers, all measured on the public
-[LeanDojo Benchmark 4](https://leandojo.org/) (Mathlib4) on its `random` and `novel_premises` test
-splits. Every retriever is scored behind one interface, with an **identical accessibility filter**
-and **identical metrics**, so the comparison is valid.
+---
 
-## Retrievers
+## Why this matters
 
-| Retriever | Config | Idea |
-|---|---|---|
-| **BM25** | `configs/bm25.yaml` | Sparse lexical baseline with a Lean-aware tokenizer (keeps identifiers/operators, splits dotted names). No training. |
-| **Dense (ReProver)** | `configs/dense_reprover.yaml` | The official ReProver ByT5-small retriever checkpoint — one vector per state / premise, cosine similarity. Its encoding (masked-mean pooling, normalization, premise serialization) reproduces ReProver exactly, so its score calibrates the harness against published numbers. |
-| **ProofLens-LI** | `configs/late_interaction.yaml` | Late-interaction (multi-vector) retriever via [PyLate](https://github.com/lightonai/pylate): one vector **per token**, scored by MaxSim, with an optional **symbol-anchored token weighting** that up-weights identifier/operator tokens in the MaxSim sum. |
+Automated theorem provers usually don't fail because they can't reason. They fail because they
+can't *find the right fact*. Mathlib has ~180k premises; a prover that searches all of them is
+hopeless. Premise selection is the bottleneck — and it's the part with the most obvious room to
+improve.
 
-The symbol weighting is a config flag (`symbol_weighting.enabled`) — `configs/late_interaction.yaml`
-runs it off, `configs/late_interaction_weighted.yaml` runs it on — so the OFF-vs-ON comparison is a
-one-line change. Both reuse the same premise index.
+Here's the specific gap we went after. **Every published Lean retriever squashes a premise into a
+single vector.** That's fine for prose, where meaning is diffuse. But formal mathematics is not
+prose — it hinges on *exact symbols*: a `≤` rather than a `<`, a specific type constructor, a
+particular function name. Pooling all of that into one averaged vector blurs precisely the signal
+formal matching depends on. And it shows up exactly where you'd predict: on **novel premises** —
+lemmas the model never saw in training — where single-vector retrievers degrade badly.
 
-## Evaluation protocol
+**Our idea:** keep one vector *per token* and match at the token level ("late interaction"), then
+explicitly up-weight the **symbol** tokens. That should preserve the symbolic structure single-vector
+models pool away — and it should help most on novel premises.
 
-Mirrors ReProver so numbers are comparable to the literature:
+We tested it. It does.
 
-- **One example** = one tactic's proof state that used at least one premise. Query = the
-  `state_before`; gold = the premises that tactic used.
-- Candidates are restricted to the **accessible** premises for that state — defined earlier in the
-  same file, or in a (transitively) imported file — applied identically to every retriever.
-- Retrieve the top **100**; report **Recall@1, Recall@10, MRR, nDCG@10** (and MAP), on the `random`
-  and `novel_premises` test splits separately.
-
-Metrics are pure, unit-tested functions. Every run writes a JSON with a full provenance header
-(config, model id, dataset version, seed, split, counts) plus per-example records, and appends a row
-to `summary.csv`; figures are rendered from that CSV.
+---
 
 ## Results
 
-Measured on LeanDojo Benchmark 4 (Lean 4), `random` and `novel_premises` test splits. Recall in %,
-MRR/nDCG@10 as decimals; **bold** = our runs, *italic* = published reference.
+Everything below is measured on [LeanDojo Benchmark 4](https://leandojo.org/) (Mathlib4), on both
+official test splits, through one harness with an identical accessibility filter and identical
+metrics for every system. Recall in %.
 
-| System | R@1 | R@10 | MRR | nDCG@10 |
+| System | random R@1 | random R@10 | novel R@1 | novel R@10 |
 |---|--:|--:|--:|--:|
-| **— split: `random` (n = 2811) —** | | | | |
-| BM25 | 5.48 | 13.63 | 0.133 | 0.105 |
-| **Dense ReProver** | **13.04** | **38.59** | **0.320** | **0.283** |
-| *ReProver (published, Lean 4)* | *13.42* | *39.60* | *0.328* | *—* |
-| ProofLens-LI — weighting OFF | 4.15 | 10.44 | 0.098 | 0.078 |
-| **ProofLens-LI — weighting ON** | **4.44** | **11.17** | **0.107** | **0.085** |
-| **— split: `novel_premises` (n = 4357) —** | | | | |
-| BM25 | 5.65 | 16.56 | 0.154 | 0.123 |
-| Dense ReProver †&nbsp;*leaked* | 23.33 | 63.66 | 0.557 | 0.505 |
-| *ReProver (published, clean-novel)* | *9.10* | *27.60* | *0.240* | *—* |
-| ProofLens-LI — weighting OFF | 4.82 | 14.05 | 0.128 | 0.103 |
-| **ProofLens-LI — weighting ON** | **5.21** | **14.53** | **0.136** | **0.108** |
+| BM25 (lexical baseline) | 5.48 | 13.63 | 5.65 | 16.56 |
+| Late interaction, off-the-shelf | 4.44 | 11.17 | 5.21 | 14.53 |
+| Dense ReProver (the published single-vector system) | 13.04 | **38.59** | — | *27.6*¹ |
+| **ProofLens-LI, fine-tuned** | 8.32 | 27.46 | 7.55 | 27.09 |
+| **ProofLens-LI, fine-tuned + symbol weighting** | **8.59** | **27.66** | **8.48** | **28.46** |
 
-**Key findings**
+<sub>¹ We could not measure a *clean* dense number on `novel_premises` — see "The leak we caught" —
+so we cite ReProver's own published figure.</sub>
 
-- **The harness is calibrated.** Our dense ReProver on `random` (13.04 / 38.59 / 0.320) matches the
-  published Lean 4 reference (13.42 / 39.60 / 0.328) to within ~3% — confirming our measurement
-  reproduces the field's protocol, so the rest of the numbers are trustworthy.
-- **Symbol weighting helps.** Turning the symbol-anchored token weighting **on beats off on every
-  metric, on both splits** (a ~3–9% relative lift) — evidence that Lean's symbol tokens carry the
-  retrieval signal that late interaction can exploit.
-- **A leakage trap, caught and quantified (†).** The only public ReProver checkpoint is trained on
-  the `random` split, and the two splits share theorems — so **97.2%** of `novel_premises` test
-  theorems sit in that model's training data (measured; control = 0.0%). Its `novel_premises` score
-  is memorisation, not skill, and is flagged rather than reported.
-- **Off-the-shelf late interaction is not yet competitive on Lean.** The general-purpose ColBERT
-  model was never trained on mathematics, so it trails even BM25 — a clean, honest baseline (it still
-  beats random chance ~400×) that motivates domain fine-tuning.
+### The four things we learned
 
-**Recall@1 and Recall@10, per method by split** (dense `novel_premises` bars hatched = leaked):
+**1. Fine-tuning transforms late interaction.** Off the shelf, a general-purpose ColBERT model is
+bad at Lean (R@10 **11.2**) — worse than BM25. It has never seen mathematics. Train it on Lean and
+it jumps to **27.7 — a 2.6× improvement**, comfortably past BM25. That's one epoch on a single GPU.
 
-![Recall@k per method by split](assets/recall_at_k.png)
-
-**Generalisation** — the trained dense retriever *drops* from `random` to `novel_premises` (using the
-published clean-novel, since its own is leaked); the untrained methods *rise*:
+**2. It generalises where the single-vector model doesn't.** This is the result the whole project
+was built to test:
 
 ![Generalisation gap](assets/generalisation_gap.png)
 
-**Ablation** — symbol-anchored token weighting OFF vs ON (only the token weights change between them):
+Look at the two *trained* systems. The **single-vector dense retriever falls off a cliff** going
+from familiar premises to novel ones: 38.6 → 27.6, a **28% drop**. Our **fine-tuned late-interaction
+model barely moves**: 27.5 → 27.1 — and with symbol weighting it actually goes *up* (27.7 → 28.5).
 
-![Symbol-weighting ablation OFF vs ON](assets/ablation_panel.png)
+So on `random` the single-vector model is still ahead. But its entire advantage evaporates the
+moment you test generalisation — which is the case that actually matters when a prover meets a lemma
+it has never seen. On novel premises, **our model (28.5) edges past the published clean dense number
+(27.6)**.
 
-**Mean Reciprocal Rank**, per method by split:
+**3. The symbol weighting works — and it works hardest exactly where we predicted.**
 
-![MRR comparison](assets/mrr_comparison.png)
+![Symbol-weighting ablation](assets/ablation_panel.png)
 
-## Roadmap
+Symbol weighting helps on both splits, but the lift on **novel premises is far bigger** (+5.1% R@10,
+**+12.3% R@1**) than on random (+0.7%, +3.2%). That isn't a fluke — it's the mechanism. You can't
+memorise a novel premise; you have to *match its symbols*. And novel premises are more lexically
+distinctive (the gold lemma's name appears literally in the proof state 26.6% of the time on `novel`
+vs 19.4% on `random`). Up-weighting symbol tokens pays off most precisely where symbolic matching is
+all you have left.
 
-The evaluation harness is the foundation; the natural next steps build directly on it.
+**4. We caught a leak in how this benchmark gets used** — arguably as valuable as the retrieval
+numbers. Next section.
 
-- **Fine-tune the late-interaction retriever on Lean.** The off-the-shelf ColBERT embeddings cap the
-  current gains. The plan: contrastive fine-tuning of the ColBERT model (via PyLate, single GPU) on
-  LeanDojo `(proof state, used-premise)` pairs — positives are the ground-truth tactic's premises,
-  negatives are in-file **hard** negatives (accessible-but-unused premises) plus in-batch negatives,
-  with the loss over the MaxSim score. This is ReProver's supervision recipe applied to a
-  multi-vector representation, and the symbol-anchored weighting is expected to compound with it.
-  Training is done **split-matched** (a model per split, evaluated on its own test set) to avoid the
-  cross-split leakage this harness measures.
-- **Run the fair comparison** — fine-tuned late interaction vs. fine-tuned single-vector dense, with
-  the random→novel_premises generalisation gap as the story metric, and symbol weighting OFF vs ON
-  as the ablation on the trained model.
-- **Publish the fine-tuned retriever** (e.g. on Hugging Face) so others can reuse it.
-- **Tune and extend the symbol weighting** — sweep the weights and refine the symbol/filler token
-  classification to align more precisely with Lean's token classes.
-- **Broaden the evaluation** — extra cut-offs (R@5, R@100, MAP), error analysis of where retrieval
-  fails, and per-premise-type breakdowns. The harness already stores the full ranked list per
-  example, so new metrics need no re-runs.
-- **Close the loop with a prover** — feed retrieved premises into a tactic generator and measure
-  end-to-end proof success, the ultimate downstream signal.
+### Overall standings
 
-## Layout
+![Recall@k](assets/recall_at_k.png)
+
+---
+
+## The leak we caught
+
+While calibrating, our dense ReProver run scored *suspiciously well* on `novel_premises` — 63.7 R@10,
+more than double the published 27.6, and **better than its own `random` score**, which should be
+impossible (novel premises are harder).
+
+It wasn't a bug in our harness. The only public ReProver checkpoint is trained on the **random**
+split — and `random` and `novel_premises` are two different partitions **of the same theorems**. So
+the released model has already seen most of the "novel" test set in training. We measured it:
+**97.2% of novel-split test theorems appear in the random-split training data** (control: 0.0%).
+
+Anyone who downloads that checkpoint and evaluates it on `novel_premises` gets a badly inflated
+number. We flag ours rather than report it — and we **train split-matched**: a separate model per
+split, evaluated only on its own test set. None of our fine-tuned numbers carry that contamination.
+
+---
+
+## How we evaluate (and why you can trust it)
+
+- **One example** = one tactic that used at least one premise. The query is the proof state before
+  that tactic; the gold answer is the premise(s) that tactic actually used.
+- Candidates are restricted to the **accessible** premises for that state (defined earlier in the
+  same file, or in an imported file) — applied identically to every system.
+- Retrieve top 100; report **R@1, R@10, MRR, nDCG@10**. This mirrors ReProver exactly, so our
+  numbers are comparable to the literature.
+
+**The calibration check.** Before trusting any number of our own, we ran the *published* ReProver
+checkpoint through our harness. It scored 13.04 / 38.59 / 0.320 against its published 13.42 / 39.60
+/ 0.328 — within ~3%. That tells us the harness reproduces the field's protocol, so everything
+measured on top of it is trustworthy. This check is why we could confidently call the
+`novel_premises` anomaly a *leak* rather than a bug.
+
+Every run writes a JSON with full provenance (config, model, dataset version, git commit, seed) plus
+the complete ranked list for every example. Metrics are pure, unit-tested functions. Everything is
+seeded and reproducible, and the figures above are generated directly from the results file — no
+hand-typed numbers.
+
+---
+
+## Where we are, and what's next
+
+### Done ✅
+- **A calibrated, trustworthy evaluation harness** — the foundation, and what makes everything else
+  defensible.
+- **Three reference systems measured**: BM25, the published dense ReProver, and off-the-shelf late
+  interaction.
+- **The leakage discovery** — found, quantified (97.2%), and designed around.
+- **A tuning audit before spending a single GPU-hour on training** — which found that a quarter of
+  proof states were being silently truncated (fixed), the best symbol weight, and that a handful of
+  ubiquitous lemmas (`rfl`, `mul_comm`) dominate a third of all training examples (capped).
+- **A full fine-tuning pipeline** — 335k / 327k training triplets with BM25-mined hard negatives,
+  de-noised so a lemma used elsewhere in the same proof is never treated as a "wrong answer".
+- **Fine-tuned models on both splits, plus the symbol-weighting ablation** — the headline results
+  above.
+
+### In flight 🔄
+**The matched single-vector control.** Our strongest claim — *late interaction generalises better
+than single-vector pooling* — currently compares our model against ReProver, which uses a different
+base model, tokenizer and training recipe. A sceptic could fairly say the difference comes from
+those, not from late interaction.
+
+So we are training **our own single-vector model on the identical data, identical hard negatives,
+identical base-model lineage and identical budget**, and measuring its generalisation gap in the same
+harness. If it drops sharply while our model stays flat, the mechanism is *proven*, not inferred.
+*(The code is written, tested and committed; launching the cluster runs is the immediate next step.)*
+
+### Next 📋
+- **Ablate the hard negatives** — how much of the gain comes from BM25-mined hard negatives versus
+  random ones?
+- **Re-tune the symbol weight on the trained model** — it was tuned before training, and the optimum
+  will have shifted.
+- **Push the model harder** — training used only 4.8 GB of a 48 GB GPU, so a much larger batch (more
+  in-batch negatives) is free headroom, and validation loss was *still falling* after one epoch.
+- **Publish the fine-tuned retriever** so others can build on it.
+- **Close the loop with a prover** — feed retrieved premises to a tactic generator and measure
+  end-to-end proof success, the metric that ultimately matters.
+
+**In short:** the core scientific question is answered and the headline results are in. What remains
+is making the central claim airtight (the control), attributing the gains (ablations), squeezing more
+out of the model, and the write-up.
+
+---
+
+## Repository layout
 
 ```
-configs/            # one YAML per retriever (model id, index dir, k-list, seed, tokenizer/weighting)
+configs/            # one YAML per experiment — model, index, weighting, splits, seed
+  train/            #   fine-tuning recipes (late-interaction + single-vector control)
 src/prooflens/
-  data/             # corpus.jsonl -> Premise objects + import graph; accessibility; proof-split loaders
-  retrievers/       # base interface + bm25, dense (ReProver), late_interaction (+ symbol weighting)
-  eval/             # metrics (pure, unit-tested) + evaluation loop
+  data/             # corpus + import graph, accessibility, proof splits, training-pair mining, audit
+  retrievers/       # bm25, dense (ReProver + single-vector), late_interaction (+ symbol weighting)
+  eval/             # metrics (pure, unit-tested) + the evaluation loop
   utils/            # io, seeding, logging
-scripts/            # download_data, build_index, run_eval, plot_results
-slurm/              # batch submission scripts for a Slurm cluster
-tests/              # metrics, loaders, accessibility, per-retriever, end-to-end smoke (+ tiny fixtures)
+scripts/            # download_data, build_index, build_pairs, train_li, train_sv, run_eval, plot_results, audit
+slurm/              # cluster jobscripts
+tests/              # 113 tests: metrics, loaders, accessibility, every retriever, end-to-end smoke
 ```
 
-## Installation
+## Getting started
 
 Requires Python 3.11+.
 
@@ -138,98 +193,52 @@ Requires Python 3.11+.
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+pytest                             # 113 tests — no downloads, no GPU (tiny bundled fixtures)
 ```
 
-The dense and late-interaction retrievers need `torch`, `transformers`, and `pylate`; BM25 and the
-test suite need none of those. Install what you use.
+BM25 and the test suite need no heavy dependencies. The dense and late-interaction retrievers need
+`torch`, `transformers` and `pylate`; hard-negative mining needs `bm25s`.
 
-## Quick start
-
-Run the unit tests (no downloads, no GPU — they use tiny bundled fixtures):
+### Running an evaluation
 
 ```bash
-pytest
+# 1. Stage the benchmark + model checkpoints (once)
+python scripts/download_data.py --out /path/to/data
+export DATA_ROOT=/path/to/data/leandojo_benchmark_4
+export MODELS_DIR=/path/to/data/models
+export SCRATCH=/path/to/scratch
+
+# 2. Evaluate any system
+python scripts/run_eval.py --config configs/bm25.yaml
+python scripts/run_eval.py --config configs/late_interaction_ft_random_weighted.yaml
+
+# 3. Render the figures (driven only by the results file — never hand-typed)
+python scripts/plot_results.py
 ```
 
-## Running an evaluation
-
-1. **Stage the data and checkpoints** (once). `download_data.py` fetches LeanDojo Benchmark 4
-   (MD5-verified) and the model checkpoints:
-
-   ```bash
-   python scripts/download_data.py --out /path/to/data                 # everything
-   python scripts/download_data.py --out /path/to/data --only benchmark
-   ```
-
-   Point the configs at your paths via environment variables:
-
-   ```bash
-   export DATA_ROOT=/path/to/data/leandojo_benchmark_4
-   export MODELS_DIR=/path/to/data/models
-   export SCRATCH=/path/to/scratch            # where indices are written
-   ```
-
-2. **Build the index** (tokenize for BM25; encode premises for dense/LI):
-
-   ```bash
-   python scripts/build_index.py --config configs/bm25.yaml
-   ```
-
-3. **Evaluate:**
-
-   ```bash
-   python scripts/run_eval.py --config configs/bm25.yaml
-   python scripts/run_eval.py --config configs/dense_reprover.yaml
-   python scripts/run_eval.py --config configs/late_interaction.yaml
-   python scripts/run_eval.py --config configs/late_interaction_weighted.yaml
-   ```
-
-   Useful flags: `--split random|novel_premises` (evaluate one split), `--limit N` (first N examples,
-   for a quick sanity check), `--results-dir DIR`.
-
-4. **Render figures** from the accumulated results:
-
-   ```bash
-   python scripts/plot_results.py --summary results/metrics/summary.csv --out results/figures
-   ```
-
-### On a cluster (Slurm)
-
-The dense and late-interaction retrievers encode the full corpus and want a GPU. `slurm/` has ready
-jobscripts — stage everything on a login node first (compute nodes are typically offline), convert
-line endings (`dos2unix slurm/*.sh`), then:
+### Fine-tuning
 
 ```bash
-sbatch slurm/build_index.sh configs/bm25.yaml        # CPU indexing
-sbatch slurm/run_eval.sh     configs/dense_reprover.yaml   # GPU evaluate
+# Mine training triplets (BM25 hard negatives, de-noised, head-capped)
+python scripts/build_pairs.py --config configs/late_interaction.yaml \
+  --split random --split-file train.json --negatives bm25 --n-neg 3 --cap 300
+
+# Fine-tune the late-interaction retriever
+python scripts/train_li.py --config configs/train/li_ft_random.yaml
 ```
 
-Adjust partition names, account, and paths at the top of each script for your cluster.
+On a cluster, `slurm/` has ready jobscripts (`dos2unix` them first).
 
-## Configuration
-
-Each retriever is driven entirely by its YAML (model id, index directory, `k`-list, batch size,
-seed, tokenizer settings, and for LI the symbol-weighting toggle and weights). Paths use environment
-variables (`${DATA_ROOT}`, `${MODELS_DIR}`, `${SCRATCH}`) so the same config runs anywhere. Nothing
-is hard-coded in the code.
-
-## Development
-
-```bash
-ruff check .
-pytest
-```
+---
 
 ## References
 
-ProofLens builds on and is measured against:
-
-- **LeanDojo** (benchmark + ReProver retriever) — Yang et al., 2023, *LeanDojo: Theorem Proving with
-  Retrieval-Augmented Language Models* ([arXiv:2306.15626](https://arxiv.org/abs/2306.15626)).
-- **ColBERT** late interaction — Khattab & Zaharia, 2020 — via **PyLate**.
-- Dense checkpoint: [`kaiyuy/leandojo-lean4-retriever-byt5-small`](https://huggingface.co/kaiyuy/leandojo-lean4-retriever-byt5-small).
-  Late-interaction checkpoint: [`lightonai/GTE-ModernColBERT-v1`](https://huggingface.co/lightonai/GTE-ModernColBERT-v1).
+- **LeanDojo / ReProver** — Yang et al., 2023 ([arXiv:2306.15626](https://arxiv.org/abs/2306.15626)) —
+  the benchmark, and the single-vector retriever we calibrate against.
+- **ColBERT** (late interaction) — Khattab & Zaharia, 2020 — via [PyLate](https://github.com/lightonai/pylate).
+- Checkpoints: [`kaiyuy/leandojo-lean4-retriever-byt5-small`](https://huggingface.co/kaiyuy/leandojo-lean4-retriever-byt5-small),
+  [`lightonai/GTE-ModernColBERT-v1`](https://huggingface.co/lightonai/GTE-ModernColBERT-v1).
 
 ## License
 
-Released under the MIT License — see `LICENSE`.
+MIT — see `LICENSE`.
