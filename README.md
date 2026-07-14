@@ -170,14 +170,44 @@ While calibrating, our dense ReProver run scored *suspiciously well* on `novel_p
 more than double the published 27.6, and **better than its own `random` score**, which should be
 impossible (novel premises are harder).
 
-It wasn't a bug in our harness. The only public ReProver checkpoint is trained on the **random**
-split — and `random` and `novel_premises` are two different partitions **of the same theorems**. So
-the released model has already seen most of the "novel" test set in training. We measured it:
-**97.2% of novel-split test theorems appear in the random-split training data** (control: 0.0%).
+It wasn't a bug in our harness. `random` and `novel_premises` are two different partitions **of the
+same theorem pool** — so a model trained on one split's training set has already seen most of the
+*other* split's test theorems.
 
-Anyone who downloads that checkpoint and evaluates it on `novel_premises` gets a badly inflated
-number. We flag ours rather than report it — and we **train split-matched**: a separate model per
-split, evaluated only on its own test set. None of our fine-tuned numbers carry that contamination.
+**The one statistic you should distrust is our own.** We measured that **97.2%** of novel-split test
+theorems appear in the random-split training data. That number is **close to a tautology, and we say
+so**: `random/train` holds ~97% of all theorems, so *any* theorem subset overlaps it at ~97%. It
+proves the splits share theorems — which is true by construction — but it does **not** prove the
+overlap *causes* the inflation. The real evidence is different, and stronger:
+
+1. **A sign flip, not a magnitude error.** A properly split-matched trained model *drops* on novel
+   premises — ReProver's own published numbers go 38.4 → 27.6, a **28% fall**. Ours went 38.59 →
+   **63.66, a 65% rise**. Novel premises are supposed to be *harder*.
+2. **Leakage is symmetric, and only one side is contaminated.** Whichever split the checkpoint was
+   trained on, the *other* split's test set is ~97% contaminated. We observe `random` **clean**
+   (38.59, matching the published 39.60) and `novel` **inflated** (63.66 against a published 27.6).
+   That pattern is only consistent with a **random-trained** checkpoint — if it were novel-trained,
+   `random` would have been the inflated one instead.
+3. **The harness is exonerated.** BM25 and off-the-shelf late interaction give sane `novel` numbers
+   through the same code. If the split were mis-loaded, or gold were leaking into the candidate set,
+   they would be inflated too. The anomaly is **model-specific**.
+4. **No version mismatch.** The ReProver maintainers state the released models were trained on Zenodo
+   record `12740403` — exactly the release we evaluate on. So the checkpoint's training splits *are*
+   the splits we compute the overlap against.
+
+The authors did nothing wrong: they released one checkpoint that performs correctly on its own split,
+and have [publicly noted](https://github.com/lean-dojo/ReProver/discussions/51) that the HuggingFace
+models "do not specify which data split it was trained using." The trap is downstream — anyone who
+evaluates that checkpoint on `novel_premises`, a completely natural thing to do, gets a number
+inflated by more than 2×. We flag ours rather than report it, and we **train split-matched**: a
+separate model per split, evaluated only on its own test set. None of our fine-tuned numbers carry
+that contamination.
+
+**We are not taking this on faith.** `scripts/leakage_stratified.py` splits `novel_premises/test` by
+whether each theorem is in `random/train`, and re-scores the two groups separately. If leakage is the
+cause, the never-trained-on group should collapse towards ~27.6. **If it scores just as high, our
+explanation is wrong and we retract it.** The test is written and unit-tested — including the
+falsification case — and it is the next thing we run.
 
 ---
 
