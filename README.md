@@ -203,11 +203,43 @@ inflated by more than 2×. We flag ours rather than report it, and we **train sp
 separate model per split, evaluated only on its own test set. None of our fine-tuned numbers carry
 that contamination.
 
-**We are not taking this on faith.** `scripts/leakage_stratified.py` splits `novel_premises/test` by
-whether each theorem is in `random/train`, and re-scores the two groups separately. If leakage is the
-cause, the never-trained-on group should collapse towards ~27.6. **If it scores just as high, our
-explanation is wrong and we retract it.** The test is written and unit-tested — including the
-falsification case — and it is the next thing we run.
+### We tested it directly, and it holds
+
+We did not leave this as an argument. `scripts/leakage_stratified.py` splits `novel_premises/test` by
+whether each theorem appears in `random/train`, and re-scores the **same per-example records** in each
+group. It is built to be **falsifiable** — if the never-trained-on group had scored just as high, the
+explanation was wrong and we would have retracted it.
+
+| Group | n | R@10 | 95% CI |
+|---|--:|--:|--:|
+| **LEAKED** — theorem is in `random/train` | 4,284 | **64.12%** | — |
+| **CLEAN** — never trained on | 73 | **37.04%** | [27.5, 46.6] |
+
+**A 27-point gap — about 4.8 standard errors, p < 1e-5.** The model scores nearly **twice as well** on
+theorems it was trained on. The clean group's confidence interval **contains the published clean-novel
+figure of 27.6**. The reported 63.66 was inflated by roughly **1.7–2.3×**. Leakage confirmed.
+
+### One honest complication (there are *two* leakage channels)
+
+It would be convenient to now use **37.04** as "the clean dense novel number". **We don't, and it
+matters why** — because doing so would drop dense's generalisation gap from −28.5% to −4.0% and
+flatter our own thesis for the wrong reason.
+
+The stratified test removes **theorem-level** leakage (the model memorising those exact proof states).
+It does **not** remove **premise-level** leakage: the premises that are "novel" with respect to
+`novel_premises/train` were still seen by a **random**-trained model, just inside other theorems'
+proofs. So `37.04` measures *"a dense model on unseen theorems whose premises it nonetheless knows"* —
+which is **not the question the split is asking.**
+
+The published **27.6** comes from a model actually trained on `novel_premises/train`, for which those
+premises are genuinely unseen — and that is **exactly the condition our fine-tuned model is in**. So
+27.6 stays the correct like-for-like comparator, and the residual 37.04 → 27.6 is plausibly that
+second channel (though it sits within the noise, so we don't claim it).
+
+**This is precisely why the matched single-vector control matters.** We train it ourselves on
+`novel_premises/train`, so it has no premise familiarity and no theorem memorisation — and it settles
+the comparison without relying on anyone's published number. This result makes that experiment more
+urgent, not less.
 
 ---
 
