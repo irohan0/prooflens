@@ -29,6 +29,32 @@ models pool away — and it should help most on novel premises.
 We tested it. The generalisation result is real. The absolute performance is not there yet. Both of
 those are below, in full.
 
+### The two paradigms, concretely
+
+**Single-vector (what everyone does).** Encode the proof state into token vectors, then **average
+them into one vector**. Do the same for each premise. Score by cosine similarity:
+
+$$\text{score}(s, p) = \cos\big(\underbrace{\text{mean}_i E_s[i]}_{\text{one vector}},\ \underbrace{\text{mean}_j E_p[j]}_{\text{one vector}}\big)$$
+
+Fast — one dot product per premise — but that `mean` is a **lossy compression**. Every token gets
+blended into a single point. If the one thing distinguishing the right lemma from the wrong one is a
+`≤` where you needed a `<`, that distinction is now one small component of an average, competing with
+every other token in the statement.
+
+**Late interaction (ours).** Keep **all** the token vectors. For each query token, find its
+best-matching premise token, and sum those best matches (this is **MaxSim**):
+
+$$\text{score}(s, p) = \sum_i \underbrace{w(i)}_{\text{our twist}} \cdot \max_j \ \text{sim}\big(E_s[i],\ E_p[j]\big)$$
+
+Nothing is averaged away. A single decisive token can carry the match, because it gets its own term
+in the sum. **Our contribution is the $w(i)$**: a weight that up-weights *symbol* tokens (`≤`, `∀`,
+`∘`, type constructors) over filler, on the theory that in formal mathematics the symbols are what
+actually carry the matching signal.
+
+Set $w(i) = 1$ and you have standard ColBERT. So the twist is **arithmetic over the score, not a new
+model** — which means the ablation is a single flag flip, and we can prove the gain comes from the
+weighting alone (same model, same index, same query vectors; only the weights differ).
+
 ---
 
 ## Results
@@ -66,9 +92,15 @@ mathematics, and it shows: it loses to a 1970s lexical baseline. Train it on Lea
 
 *(both rows use symbol weighting ON, so the comparison isolates training)*
 
-**Roughly a 2.5× improvement across the board**, from one epoch on a single GPU. It moves late
-interaction from *below* BM25 to roughly **2× BM25** — but, importantly, still **below dense
-ReProver on `random`**. More on that in the limitations.
+![Fine-tuning lift](assets/finetuning_lift.png)
+
+**Roughly a 2.5× improvement across the board**, from one epoch on a single GPU. Read the figure
+left to right: off the shelf we start *below* BM25 (the red line) — a neural retriever losing to a
+1970s keyword baseline. Fine-tuning takes us to roughly **2× BM25**. And on `novel_premises` it
+carries us **over the dense reference line** (the blue one) that the single-vector system drops to.
+
+But note the left panel: on `random` we are still **well below dense ReProver**. That shortfall is
+real, and we deal with it head-on in the limitations.
 
 ### How we compare to the other methods
 

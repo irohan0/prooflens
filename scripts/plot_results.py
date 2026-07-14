@@ -1,11 +1,12 @@
 """Render the Phase 1 result figures from results/metrics/summary.csv (never hand-typed numbers).
 
-Produces the five figures in results/README.md §figures:
+Produces the six figures in results/README.md §figures:
   1. recall_at_k        — R@1 & R@10 per method, grouped by split (the headline).
   2. generalisation_gap — random vs novel_premises per method (the thesis story).
   3. mrr_comparison     — MRR per method, both splits.
   4. ablation_panel     — ProofLens-LI weighting OFF vs ON.
-  5. comparison_table   — the standings (ours vs published) rendered as an image.
+  5. finetuning_lift    — off-the-shelf vs fine-tuned R@10, vs the BM25/dense reference lines.
+  6. comparison_table   — the standings (ours vs published) rendered as an image.
 
 All OUR numbers come from summary.csv. Published-literature values are documented citation
 constants (they do not drift), used only for the reference rows in the table and the dense
@@ -288,7 +289,64 @@ def plot_ablation(latest: dict, out_dir: Path) -> list[Path]:
     return _save(fig, out_dir, "ablation_panel")
 
 
-# -- 5. comparison table image ----------------------------------------------------------------
+# -- 5. fine-tuning lift (the journey: off-the-shelf -> fine-tuned, vs the two baselines) -------
+def plot_finetuning_lift(latest: dict, out_dir: Path) -> list[Path]:
+    """R@10 before vs after fine-tuning (weighting ON both sides, so the bars isolate *training*),
+    with BM25 and dense ReProver drawn as reference lines. Tells the whole story in one figure:
+    off-the-shelf LI starts BELOW BM25; fine-tuning takes it to ~2x BM25; on novel it crosses the
+    (clean) dense reference that the single-vector model drops to."""
+    if not any(_row(latest, "ft_li_on", s) for s in SPLIT_ORDER):
+        return []
+    fig, axes = plt.subplots(1, 2, figsize=(11.5, 5.2), squeeze=False)
+    for col, split in enumerate(SPLIT_ORDER):
+        ax = axes[0][col]
+        before = _get(latest, "li_on", split, "R@10") or 0.0
+        after = _get(latest, "ft_li_on", split, "R@10") or 0.0
+        bm25 = _get(latest, "bm25", split, "R@10") or 0.0
+        # dense on novel is leaked -> use the published clean-novel reference
+        dense = (DENSE_CLEAN_NOVEL_R10 if (("dense", split) in LEAKED)
+                 else (_get(latest, "dense", split, "R@10") or 0.0))
+
+        bars = ax.bar([0, 1], [before, after], 0.55,
+                      color=["#B0B0B0", "#55A868"], zorder=3)
+        for b in bars:
+            ax.annotate(f"{b.get_height() * 100:.2f}",
+                        (b.get_x() + b.get_width() / 2, b.get_height()), ha="center", va="bottom",
+                        fontsize=11, fontweight="bold", xytext=(0, 2), textcoords="offset points")
+
+        top = max(after, dense, bm25)
+        # reference lines stop short of the right margin so their labels sit in clear space
+        dense_lbl = "dense ReProver" + ("\n(published clean)" if ("dense", split) in LEAKED else "")
+        for yv, colr, lbl in ((bm25, "#C44E52", "BM25"), (dense, "#4C72B0", dense_lbl)):
+            ax.axhline(yv, xmax=0.66, ls="--", lw=1.6, color=colr, zorder=2)
+            ax.annotate(f"{lbl}  {yv * 100:.1f}", (1.62, yv), va="center", ha="left", fontsize=8,
+                        color=colr, fontweight="bold", zorder=5)
+
+        if before > 0:                                     # the lift arrow
+            lift = 100 * (after - before) / before
+            ax.annotate("", xy=(1, after), xytext=(0, before),
+                        arrowprops={"arrowstyle": "-|>", "lw": 2, "color": "#2A7F3E",
+                                    "connectionstyle": "arc3,rad=-0.25"}, zorder=4)
+            ax.annotate(f"+{lift:.0f}%\nfine-tuning", (0.5, (before + after) / 2),
+                        ha="center", va="center", fontsize=11, fontweight="bold",
+                        color="#2A7F3E", xytext=(-6, 10), textcoords="offset points")
+
+        ax.set_xticks([0, 1])
+        ax.set_xticklabels(["late interaction\noff-the-shelf", "ProofLens-LI\nfine-tuned"],
+                           fontsize=9)
+        ax.set_xlim(-0.6, 2.5)
+        ax.set_ylim(0, top * 1.28)
+        ax.set_ylabel("R@10 (%)")
+        ax.set_title(f"split: {SPLIT_LABELS[split]}")
+        ax.grid(axis="y", alpha=0.3, zorder=0)
+        _percent_yaxis(ax)
+    fig.suptitle("Fine-tuning is the single biggest lever — and on novel premises it takes us "
+                 "past the single-vector reference", fontweight="bold")
+    fig.tight_layout()
+    return _save(fig, out_dir, "finetuning_lift")
+
+
+# -- 6. comparison table image ----------------------------------------------------------------
 def render_comparison_table(latest: dict, out_dir: Path) -> list[Path]:
     def pct(v):
         return "—" if v is None else f"{v * 100:.2f}"
@@ -359,6 +417,7 @@ def main() -> None:
         + plot_generalisation_gap(latest, out)
         + plot_mrr(latest, out)
         + plot_ablation(latest, out)
+        + plot_finetuning_lift(latest, out)
         + render_comparison_table(latest, out)
     )
     for p in produced:
