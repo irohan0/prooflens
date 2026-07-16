@@ -217,11 +217,21 @@ def evaluate(config: dict, results_dir: str = "results", limit: int | None = Non
             "candidate_scope": "accessible (rank all, keep top-k accessible; matches ReProver)",
             "retrieve_k": retrieve_k,
             "metrics_reported": metric_keys,
-            "premise_text": {
-                "bm25": "full_name + ' ' + code",
-                "dense": "ReProver Premise.serialize (code with <a>full_name</a> self-ref markers)",
-                "late_interaction": "full_name + ' ' + code (shared with bm25)",
-            }.get(config["retriever"]),
+            # NOTE: dense supports two serializations (Phase 15's matched single-vector control uses
+            # full_name+code so its premise text matches the LI/pairs text) — the header must record
+            # the one actually used, or the comparability note in the results would be wrong.
+            "premise_text": (
+                {
+                    "reprover_serialize":
+                        "ReProver Premise.serialize (code with <a>full_name</a> self-ref markers)",
+                    "full_name_code":
+                        "full_name + ' ' + code (matched SV control; shared with bm25/LI)",
+                }[config.get("model", {}).get("premise_text", "reprover_serialize")]
+                if config["retriever"] == "dense" else {
+                    "bm25": "full_name + ' ' + code",
+                    "late_interaction": "full_name + ' ' + code (shared with bm25)",
+                }.get(config["retriever"])
+            ),
             "query_text": "proof state (state_before), == ReProver Context.serialize",
             "tokenizer": config.get("tokenizer") if config["retriever"] == "bm25" else None,
             "model_config": (

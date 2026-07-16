@@ -98,6 +98,10 @@ def train(config: dict, limit: int | None = None) -> str:
              base_path, max_length, device or "auto")
     model = SentenceTransformer(base_path, device=device)
     model.max_seq_length = max_length
+    # Log the module stack (Transformer -> Pooling -> ...) so the run record shows the checkpoint's
+    # OWN pooling mode (cls vs mean) — the control uses whatever gte-modernbert-base defines, and
+    # the report must state what that actually was, not assume.
+    log.info("single-vector module stack: %s", model)
     loss = losses.MultipleNegativesRankingLoss(model)      # in-batch + the explicit hard negative
 
     do_eval = eval_ds is not None
