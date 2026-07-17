@@ -14,8 +14,8 @@ interaction*, not just fine-tuning, is what shrinks the random→novel gap.
 Evaluated through the SAME frozen harness via `dense.py`'s `sentence_transformer` encoder option
 (exact cosine over the accessible set) — identical metrics/accessibility to every other retriever.
 
-    python scripts/train_sv.py --config configs/train/sv_ft_random.yaml
-    python scripts/train_sv.py --config configs/train/sv_ft_random.yaml --limit 10000   # trial
+    python scripts/train_sv.py --config configs/train/sv_ft_random_lr3e6.yaml
+    python scripts/train_sv.py --config configs/train/sv_ft_novel_lr3e6.yaml --limit 10000  # trial
 
 torch / sentence-transformers / datasets are imported lazily (cluster-only).
 """

@@ -1,0 +1,27 @@
+# Matched single-vector control — NOVEL split, at the SWEEP-CHOSEN lr=3e-6 (the 2e-5 run damaged the
+# model; 3e-6 won the random sweep: 32.0 R@10 vs base 11.4). Same triplets/budget/base as
+# li_ft_novel; SAME lr as LI now too (3e-6) — an even tighter matched control than planned (the
+# "different best-practice LR" assumption was wrong; the empirically-correct lr is 3e-6 for both).
+# Split-matched: evaluated only on novel_premises/test. Its random->novel gap vs FT-LI's is THE
+# decisive generalisation test.
+name: sv_ft_novel_lr3e6
+
+base_model:
+  hf_id: Alibaba-NLP/gte-modernbert-base
+  path: ${MODELS_DIR}/Alibaba-NLP__gte-modernbert-base
+  max_length: 512
+
+train:
+  pairs: ${SCRATCH}/prooflens/pairs/novel_premises_bm25_train.jsonl   # SAME triplets as li_ft_novel
+  val_pairs: ${SCRATCH}/prooflens/pairs/novel_premises_bm25_val.jsonl
+  epochs: 1
+  batch_size: 32
+  lr: 3.0e-6
+  warmup_ratio: 0.05
+  bf16: true
+  seed: 42
+  logging_steps: 500
+  eval_steps: 5000
+  save_steps: 5000
+
+output_dir: ${SCRATCH}/prooflens/checkpoints/sv_ft_novel_lr3e6

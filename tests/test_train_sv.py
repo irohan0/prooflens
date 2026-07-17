@@ -43,9 +43,12 @@ def _load(rel: str) -> dict:
 
 # -- matched-control parity (the invariant the whole comparison rests on) -------------------------
 
+# The SV control's canonical configs are the sweep-chosen lr=3e-6 files (the initial 2e-5 run
+# catastrophically damaged the model — see results/phase_logs/phase15.md; the 2e-5 configs were
+# removed). The winning lr turned out to EQUAL LI's (3e-6), so the control is now matched on lr too.
 @pytest.mark.parametrize("li_cfg, sv_cfg", [
-    ("configs/train/li_ft_random.yaml", "configs/train/sv_ft_random.yaml"),
-    ("configs/train/li_ft_novel.yaml", "configs/train/sv_ft_novel.yaml"),
+    ("configs/train/li_ft_random.yaml", "configs/train/sv_ft_random_lr3e6.yaml"),
+    ("configs/train/li_ft_novel.yaml", "configs/train/sv_ft_novel_lr3e6.yaml"),
 ])
 def test_sv_and_li_train_on_identical_data_and_budget(li_cfg, sv_cfg):
     li, sv = _load(li_cfg)["train"], _load(sv_cfg)["train"]
@@ -56,17 +59,19 @@ def test_sv_and_li_train_on_identical_data_and_budget(li_cfg, sv_cfg):
     assert sv["epochs"] == li["epochs"]
     assert sv["batch_size"] == li["batch_size"]
     assert sv["seed"] == li["seed"]
-    # LRs deliberately DIFFER (each architecture's best practice; forcing one shared LR would
-    # handicap a side). Pinned so a re-tune is a conscious, test-updating act.
-    assert float(li["lr"]) == pytest.approx(3.0e-6)
-    assert float(sv["lr"]) == pytest.approx(2.0e-5)
     assert sv["warmup_ratio"] == li["warmup_ratio"]
+    # SAME lr now too: the sweep selected 3e-6, equal to LI's -> an even tighter matched control.
+    # Pinned so any re-tune is a conscious, test-updating act. (2e-5 damaged the model; 1e-5 barely
+    # beat the untrained base; 3e-6 won at 32.0 R@10 vs base 11.4 — phase15.md.)
+    assert float(sv["lr"]) == pytest.approx(3.0e-6)
+    assert float(li["lr"]) == pytest.approx(3.0e-6)
+    assert float(sv["lr"]) == float(li["lr"])
 
 
 def test_sv_base_is_the_li_models_lineage():
     # gte-modernbert-base is the ModernBERT that GTE-ModernColBERT is built on -> the comparison
     # holds the base lineage fixed and varies only the matching head.
-    for cfg in ("configs/train/sv_ft_random.yaml", "configs/train/sv_ft_novel.yaml"):
+    for cfg in ("configs/train/sv_ft_random_lr3e6.yaml", "configs/train/sv_ft_novel_lr3e6.yaml"):
         base = _load(cfg)["base_model"]
         assert base["hf_id"] == "Alibaba-NLP/gte-modernbert-base"
         assert "gte-modernbert-base" in base["path"]
@@ -75,9 +80,9 @@ def test_sv_base_is_the_li_models_lineage():
 # -- split-matching + frozen-harness wiring of the eval configs -----------------------------------
 
 @pytest.mark.parametrize("train_cfg, eval_cfg, split, pairs_token", [
-    ("configs/train/sv_ft_random.yaml", "configs/dense_sv_ft_random.yaml",
+    ("configs/train/sv_ft_random_lr3e6.yaml", "configs/dense_sv_ft_random_lr3e6.yaml",
      "random", "random_bm25_train"),
-    ("configs/train/sv_ft_novel.yaml", "configs/dense_sv_ft_novel.yaml",
+    ("configs/train/sv_ft_novel_lr3e6.yaml", "configs/dense_sv_ft_novel_lr3e6.yaml",
      "novel_premises", "novel_premises_bm25_train"),
 ])
 def test_sv_eval_config_scores_the_trained_checkpoint_split_matched(
@@ -99,7 +104,8 @@ def test_sv_eval_config_scores_the_trained_checkpoint_split_matched(
 
 
 def test_the_two_sv_runs_do_not_share_checkpoints_or_indices():
-    r, n = _load("configs/dense_sv_ft_random.yaml"), _load("configs/dense_sv_ft_novel.yaml")
+    r = _load("configs/dense_sv_ft_random_lr3e6.yaml")
+    n = _load("configs/dense_sv_ft_novel_lr3e6.yaml")
     assert r["model"]["path"] != n["model"]["path"]
     assert r["index"]["dir"] != n["index"]["dir"]
 
