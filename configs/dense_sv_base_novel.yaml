@@ -1,0 +1,31 @@
+# DIAGNOSTIC (Phase 15) — off-the-shelf gte-modernbert-base (NO fine-tuning) on novel_premises.
+# Companion to dense_sv_base_random.yaml. Reuses the SAME premise index (dir: sv_base) — the corpus
+# encoding is split-independent — so this eval only re-scores, it does not re-encode 181k premises.
+# Untrained, so leak-free on both splits (like off-the-shelf LI): a legitimate single-vector
+# off-the-shelf baseline, and the disambiguator for the implausibly-low FT-SV numbers.
+name: dense_sv_base_novel
+retriever: dense
+
+model:
+  hf_id: Alibaba-NLP/gte-modernbert-base
+  path: ${MODELS_DIR}/Alibaba-NLP__gte-modernbert-base     # the UNTRAINED base model
+  encoder: sentence_transformer
+  premise_text: full_name_code
+  max_length: 512
+  batch_size: 64
+
+index:
+  dir: ${SCRATCH}/prooflens/indices/sv_base               # shared with the random base eval
+
+data:
+  corpus_path: ${DATA_ROOT}/corpus.jsonl
+  splits_dir: ${DATA_ROOT}/
+  split_file: test.json
+  accessibility: computed
+
+eval:
+  k_list: [1, 10]
+  retrieve_k: 100
+  splits: [novel_premises]
+
+seed: 42
