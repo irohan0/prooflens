@@ -2,11 +2,14 @@
 
 The single-vector counterpart to `scripts/train_li.py`: it consumes the **identical** Phase-12
 triplets and trains with the **same budget** and the **same base lineage** (`gte-modernbert-base`,
-the ModernBERT that GTE-ModernColBERT is built on), but with **mean-pooled cosine** — a
+the ModernBERT that GTE-ModernColBERT is built on), but pooled to **one vector per text** — a
 `SentenceTransformer` + `MultipleNegativesRankingLoss` (in-batch + the explicit hard negative) —
-instead of ColBERT MaxSim. So the ONLY difference vs the LI run is the matching mechanism
-(single-vector pooling vs multi-vector late interaction) → it isolates whether *late interaction*,
-not just fine-tuning, is what shrinks the random→novel gap.
+instead of ColBERT MaxSim. The pooling is whatever the checkpoint's own ST config defines
+(**gte-modernbert-base uses CLS-token pooling** — verified from the module stack in the Phase-15
+trial run, job 17639680 — not mean; either way the text is bottlenecked through a single 768-d
+vector, which is the thing under test). So the ONLY difference vs the LI run is the matching
+mechanism (single-vector pooling vs multi-vector late interaction) → it isolates whether *late
+interaction*, not just fine-tuning, is what shrinks the random→novel gap.
 
 Evaluated through the SAME frozen harness via `dense.py`'s `sentence_transformer` encoder option
 (exact cosine over the accessible set) — identical metrics/accessibility to every other retriever.
@@ -141,7 +144,8 @@ def train(config: dict, limit: int | None = None) -> str:
     meta = {
         "tool": "scripts/train_sv.py",
         "config_name": config.get("name"),
-        "architecture": "single-vector (SentenceTransformer, mean-pool, MultipleNegativesRanking)",
+        "architecture": ("single-vector (SentenceTransformer, checkpoint's own pooling — "
+                         "gte-modernbert-base = CLS token, MultipleNegativesRanking)"),
         "base_model": base_path,
         "max_length": max_length,
         "pairs": pairs_path,

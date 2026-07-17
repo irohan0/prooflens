@@ -136,7 +136,8 @@ class _ByT5Encoder:
 
 
 class _STEncoder:
-    """sentence-transformers single-vector encoder for the **matched control** (mean-pool +
+    """sentence-transformers single-vector encoder for the **matched control** (the checkpoint's
+    own pooling — gte-modernbert-base uses CLS-token pooling, per its ST module config — then
     L2-normalize). Loads a `SentenceTransformer` checkpoint fine-tuned by `scripts/train_sv.py`;
     `encode(texts)` returns an L2-normalised float32 `[n, d]` array — the SAME output contract as
     `_ByT5Encoder`, so `DenseRetriever.retrieve` (exact cosine over the accessible set) is byte-for-
