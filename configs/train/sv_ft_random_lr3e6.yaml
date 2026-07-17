@@ -1,0 +1,27 @@
+# LR-sweep member (Phase 15 retry) — the 2e-5 run DAMAGED gte-modernbert-base (11.4 -> 5.05 R@10,
+# grad-norm explosion, eval_loss rose). This trains the matched SV control at a GENTLER lr=3.0e-6
+# to fine-tune an already-strong retriever without catastrophic forgetting. Same triplets/budget/
+# base as li_ft_random; only lr differs from the failed run. Fair-control discipline: SV gets the
+# same courtesy LI got (its symbol weight was swept in Phase 11), so its lr is chosen by a sweep,
+# not guessed. The winner becomes the final random control (no retrain) and its lr is applied to novel.
+name: sv_ft_random_lr3e6
+
+base_model:
+  hf_id: Alibaba-NLP/gte-modernbert-base
+  path: ${MODELS_DIR}/Alibaba-NLP__gte-modernbert-base
+  max_length: 512
+
+train:
+  pairs: ${SCRATCH}/prooflens/pairs/random_bm25_train.jsonl      # SAME triplets as li_ft_random
+  val_pairs: ${SCRATCH}/prooflens/pairs/random_bm25_val.jsonl
+  epochs: 1
+  batch_size: 32
+  lr: 3.0e-6
+  warmup_ratio: 0.05
+  bf16: true
+  seed: 42
+  logging_steps: 500
+  eval_steps: 5000
+  save_steps: 5000
+
+output_dir: ${SCRATCH}/prooflens/checkpoints/sv_ft_random_lr3e6
