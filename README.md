@@ -139,8 +139,11 @@ published clean-novel (27.6), corroborating both.
 
 Why does this happen? A single vector is a lossy summary. When a model is trained and then meets a
 premise from a *seen* distribution, that summary is good enough. When it meets a genuinely *novel*
-premise, the specific token-level detail is what it needs — and that's exactly what pooling threw
-away. Late interaction keeps one vector per token, so the detail survives.
+premise, the specific token-level detail is what it needs — and that's exactly what pooling throws
+away. Late interaction keeps one vector per token, so the detail survives. **But we don't leave that
+as a story — we decomposed it** (§"Is the advantage structural, or a neural BM25?" below), and found
+the surviving detail is specifically *lexical* token overlap. Read that section for the honest, precise
+version of this mechanism; it's narrower than the headline and more defensible for it.
 
 ### Symbol weighting works, and only where the theory says it should
 
@@ -293,17 +296,30 @@ model is a bug signal, not a result. We diagnosed it (grad-norm explosion, risin
 proper LR sweep, and the working control (3e-6) is the number reported. The failed run never entered
 the results table.
 
-### 3. Are we just rebuilding a neural BM25?
+### 3. Is the advantage structural, or a "neural BM25"? — we measured it, and it's mostly lexical
 
-A real concern. BM25 (untrained) *also* does better on `novel` than `random`, because novel premises
-are more lexically distinctive. Late interaction is more lexically sensitive than mean-pooled dense —
-it's arguably a soft, learned lexical matcher. So some of our "flat generalisation gap" may be
-inherited lexical sensitivity rather than a deeper structural advantage.
+This is the sharpest objection to the whole thesis, so we ran the decisive test: split every novel
+example by whether the gold lemma's name literally appears in the proof state, then compare late
+interaction against the matched single-vector control **within each bucket**, example-paired.
 
-**Our defence:** we beat BM25 by ~2× on both splits, so we're clearly doing far more than lexical
-overlap. **But it isn't measured.** The clean test is to stratify results by whether the gold lemma's
-name literally appears in the proof state, and check that our advantage survives on the subset where
-it *doesn't*. That's a planned ablation, not a completed one.
+| Novel examples | n | LI R@10 | SV R@10 | LI − SV |
+|---|--:|--:|--:|--:|
+| **Lexical** (gold name in the state) | 1,158 (27%) | 30.6 | 24.1 | **+6.5** ✅ significant |
+| **Structural** (name *not* in the state) | 3,199 (73%) | 27.7 | 26.9 | +0.8 ❌ not significant |
+
+**Honest verdict: late interaction's advantage is concentrated in the lexical-overlap cases. On the
+structural 73%, the two are statistically tied.** So the mechanism is best described as *recovering the
+token-level lexical signal that single-vector pooling averages away* — real and significant where a
+shared symbol exists, but **not** demonstrated structural reasoning. We state the claim at that
+strength and no higher.
+
+This is a *sharper* result than the naive one, not a retreat: it pinpoints exactly what late
+interaction buys you and honestly bounds it. There is also concrete structural evidence — **456 novel
+examples where late interaction ranks the right lemma #1 and single-vector misses it entirely**
+(`mul_sum`, `basicOpen_pow`, `filter_union_filter_neg_eq`, none of whose names appear in the state) —
+but since the *average* structural gap is a tie, single-vector has comparable wins elsewhere, and we
+don't cherry-pick. (`scripts/lexical_stratified.py`, pre-registered and falsifiable — the unit tests
+cover the "it's only lexical" outcome too.)
 
 ### 4. "Novel premises" is not the same as "novel symbols"
 
