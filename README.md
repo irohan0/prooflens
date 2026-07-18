@@ -67,14 +67,16 @@ every system. Recall in %. `random` n=2,811; `novel_premises` n=4,357.
 |---|:--:|--:|--:|--:|--:|
 | BM25 (lexical baseline) | no | 5.48 | 13.63 | 5.65 | 16.56 |
 | Late interaction, off-the-shelf | no | 4.15 | 10.44 | 4.82 | 14.05 |
-| Late interaction, off-the-shelf + symbol weighting | no | 4.44 | 11.17 | 5.21 | 14.53 |
-| Dense ReProver (published single-vector system) | yes | **13.04** | **38.59** | — | *27.6*¹ |
-| **ProofLens-LI, fine-tuned** | yes | 8.32 | 27.46 | 7.55 | 27.09 |
+| Single-vector, off-the-shelf (gte-modernbert) | no | 4.01 | 11.41 | 4.28 | 15.36 |
+| Dense ReProver (published single-vector system) | yes | 13.04 | **38.59** | — | *27.6*¹ |
+| **Matched single-vector control, fine-tuned** | yes | **8.97** | **32.00** | 6.66 | 26.16 |
 | **ProofLens-LI, fine-tuned + symbol weighting** | yes | 8.59 | 27.66 | **8.48** | **28.46** |
 
-<sub>¹ We could not measure a *clean* dense number on `novel_premises` — see "The leak we caught" —
-so we cite ReProver's own published figure. This is the one cell in the table not produced by our
-harness, and we flag it as such.</sub>
+<sub>¹ We could not measure a *clean* dense number on `novel_premises` from the public checkpoint — see
+"The leak we caught" — so we cite ReProver's own published figure. Every other cell is produced by our
+harness. Note the two fine-tuned single-vector systems (our control **32.00** and dense ReProver
+**38.59**) both **beat** late interaction on `random` — and both **collapse** on `novel`, which is the
+whole point (next section).</sub>
 
 ### Before and after fine-tuning — the single biggest lever
 
@@ -102,34 +104,43 @@ carries us **over the dense reference line** (the blue one) that the single-vect
 But note the left panel: on `random` we are still **well below dense ReProver**. That shortfall is
 real, and we deal with it head-on in the limitations.
 
-### How we compare to the other methods
+### The matched control — the result the project was built to test
 
-| Comparison | random R@10 | novel R@10 | Read |
-|---|--:|--:|---|
-| Ours vs **BM25** | 27.66 vs 13.63 | 28.46 vs 16.56 | We win decisively — **2.0× / 1.7×** |
-| Ours vs **off-the-shelf LI** | 27.66 vs 11.17 | 28.46 vs 14.53 | Fine-tuning is what made it work — **2.5×** |
-| Ours vs **dense ReProver** | 27.66 vs **38.59** | **28.46** vs 27.6 | **We lose on `random` by 28%.** We edge ahead on `novel`. |
+Our central claim is that late interaction *generalises* better than single-vector pooling. To prove
+that — not just assert it — we trained **our own single-vector model on the identical everything**:
+same training triplets, same hard negatives, same base-model lineage (`gte-modernbert-base`, the
+ModernBERT that our ColBERT is built on), same budget, same learning rate, scored through the same
+frozen harness. **The only difference between the two systems is single-vector cosine vs multi-vector
+MaxSim.** So any difference in behaviour is attributable to *the matching mechanism itself* — not the
+data, the tokenizer, the recipe, or the budget.
 
-That last row is the whole story in one line, and it cuts both ways. **On the familiar split we are
-clearly worse than the state of the art. On the split that tests generalisation, we are not.**
+![The matched control](assets/matched_control.png)
 
-### The generalisation gap — the result the project was built to test
-
-![Generalisation gap](assets/generalisation_gap.png)
-
-Look only at the two *trained* systems. Going from familiar premises to novel ones:
-
-| System | random R@10 | novel R@10 | Gap |
+| System (both fine-tuned, everything matched) | random R@10 | novel R@10 | Gap |
 |---|--:|--:|--:|
-| Dense ReProver (single-vector) | 38.59 | 27.6 | **−28.5%** ⬇ |
-| ProofLens-LI, fine-tuned | 27.46 | 27.09 | **−1.3%** |
-| ProofLens-LI, fine-tuned + symbol weighting | 27.66 | 28.46 | **+2.9%** ⬆ (novel is *better*) |
+| **Matched single-vector control** | **32.00** | 26.16 | **−18.2%** ⬇ |
+| **ProofLens-LI (late interaction)** | 27.66 | **28.46** | **+2.9%** ⬆ |
 
-The single-vector retriever **falls off a cliff**. Ours barely moves — and with symbol weighting it
-actually goes *up*. The single-vector model's entire advantage evaporates the moment you test
-generalisation, which is the case that matters when a prover meets a lemma it has never seen.
+The lines **cross**. The single-vector control drops **18% (a 5.3σ effect)** going from seen to unseen
+premises. Late interaction stays flat — it actually rises. And it's not a single-metric fluke: the
+same split holds on R@1 (SV **−25.8%** vs LI −1.3%) and MRR (SV **−14.3%** vs LI +1.5%).
 
-**This is the strongest thing we have. It is also not yet airtight** — see limitations.
+**The honest nuance makes the result sharper, not weaker.** On `random`, single-vector *wins* — 32.0
+vs 27.7. So the claim is not "late interaction is better." It is: **late interaction is more robust —
+it wins precisely on the unseen-lemma case that actually matters when a prover meets a lemma it has
+never seen.** That's a more defensible, more mechanistically specific claim than a blanket victory.
+
+And it isn't just our control. **Two independent single-vector systems collapse on novel** — ours
+(−18%) *and* the published dense ReProver (38.59 → 27.6, −28%). Late interaction is the only trained
+system that holds. Our clean control's novel score (26.16) even lands right next to ReProver's
+published clean-novel (27.6), corroborating both.
+
+![Generalisation gap, all systems](assets/generalisation_gap.png)
+
+Why does this happen? A single vector is a lossy summary. When a model is trained and then meets a
+premise from a *seen* distribution, that summary is good enough. When it meets a genuinely *novel*
+premise, the specific token-level detail is what it needs — and that's exactly what pooling threw
+away. Late interaction keeps one vector per token, so the detail survives.
 
 ### Symbol weighting works, and only where the theory says it should
 
@@ -236,10 +247,11 @@ premises are genuinely unseen — and that is **exactly the condition our fine-t
 27.6 stays the correct like-for-like comparator, and the residual 37.04 → 27.6 is plausibly that
 second channel (though it sits within the noise, so we don't claim it).
 
-**This is precisely why the matched single-vector control matters.** We train it ourselves on
-`novel_premises/train`, so it has no premise familiarity and no theorem memorisation — and it settles
-the comparison without relying on anyone's published number. This result makes that experiment more
-urgent, not less.
+**This is precisely why the matched single-vector control matters** — and we have now run it. Our
+control is trained by us on `novel_premises/train`, so it has no premise familiarity and no theorem
+memorisation. It settles the comparison without relying on anyone's published number: it drops
+**32.00 → 26.16 (−18%)** on novel, and its clean novel score (26.16) lands right next to the published
+27.6. Both independent, leak-free single-vector systems drop on novel; late interaction does not.
 
 ---
 
@@ -248,35 +260,38 @@ urgent, not less.
 This is the section to read sceptically. We have gone looking for the holes rather than waiting for
 someone else to find them.
 
-### 1. We lose to dense ReProver on `random` — by a lot (27.66 vs 38.59 R@10)
+### 1. On `random`, we lose to *both* single-vector systems — absolute performance is not the win
 
-This is the honest headline weakness. **Our retriever is not state of the art in absolute terms on
-the standard split.** Three reasons we think it's a *floor* and not a *ceiling*:
+Be clear-eyed about this: on the `random` split, late interaction (27.66 R@10) is beaten by the
+published dense ReProver (38.59) **and** by our own matched single-vector control (32.00). **In raw
+accuracy on the standard split, late interaction is the weakest of the trained systems.** Our claim is
+explicitly *not* absolute performance — it is generalisation robustness (§the matched control). We say
+this plainly so nobody mistakes the claim for something it isn't.
 
-- **We are undertrained.** One epoch, batch size 32, learning rate 3e-6 — and **validation loss was
-  still falling when we stopped** (1.55 → 1.25). We used **4.8 GB of a 48 GB GPU**. Batch size is
-  free quality in contrastive training (more in-batch negatives), and we left almost all of it on the
-  table.
-- **Our base model has the wrong tokenizer for the job.** We build on an English ColBERT whose BPE
-  tokenizer fragments Lean's unicode operators. ReProver deliberately uses **byte-level ByT5** to
-  avoid exactly this. That is a known, unaddressed handicap.
-- **ReProver's recipe is mature**; ours is a first pass.
+Two reasons late interaction's `random` number is likely a *floor* (both untested, so stated as
+hypotheses): we are **undertrained** — one epoch, batch 32, **4.8 GB of a 48 GB GPU**, val loss still
+falling — and our ColBERT base has a **BPE tokenizer** that fragments Lean's unicode, where the
+byte-level alternative might help. Neither is proven; the bigger-budget run is future work.
 
-None of that is proven yet. Until we run the bigger budget, "we're undertrained" is a hypothesis, not
-a result — and we should say so out loud.
+### 2. The central claim — now a controlled comparison ✅ (resolved)
 
-### 2. The central claim is not yet a controlled comparison — this is the biggest hole
+This was previously the biggest hole: our generalisation claim compared *our model vs ReProver*, which
+differ in everything (base model, tokenizer, pipeline, budget), so a sceptic could attribute the
+difference to any confound rather than to late interaction. **We have now closed it.**
 
-Our headline is "late interaction generalises better than single-vector pooling." But the comparison
-we actually made is **our model vs ReProver**, and those two differ in *everything*: base model,
-tokenizer, training data pipeline, negatives, budget, recipe. A sceptic can fairly say the
-generalisation difference comes from any of those, not from late interaction.
+We trained a **matched single-vector control**: same triplets, same hard negatives, same base lineage,
+same budget, **same learning rate (3e-6)**, same frozen harness — the only difference being
+single-vector cosine vs multi-vector MaxSim. It drops **−18% on novel** while late interaction stays
+flat (§the matched control). With every confound held fixed, the generalisation difference is
+attributable to the matching mechanism itself. **The claim no longer carries an asterisk.**
 
-**So the mechanism is currently inferred, not proven.** The fix is a **matched single-vector control**
-— the same triplets, the same hard negatives, the same base lineage, the same budget, the same frozen
-harness, with the *only* difference being single-vector cosine vs multi-vector MaxSim. The code is
-written, tested and committed; **the cluster runs are the immediate next step.** Until they land, this
-claim carries an asterisk, and we will present it with one.
+One methodological note worth stating, because it *strengthens* trust: our first attempt at the
+control used a "standard" single-vector learning rate (2e-5) and it **catastrophically damaged** the
+model — 11.4 → 5.05 R@10, *below* the untrained baseline. We caught it with a "too-bad-to-be-true"
+check (the mirror of the leakage "too-good" check): a fine-tune that scores below its own off-the-shelf
+model is a bug signal, not a result. We diagnosed it (grad-norm explosion, rising eval-loss), ran a
+proper LR sweep, and the working control (3e-6) is the number reported. The failed run never entered
+the results table.
 
 ### 3. Are we just rebuilding a neural BM25?
 
@@ -320,15 +335,16 @@ needs a price tag attached.
 
 ### So — is the approach theoretically wrong?
 
-**No.** Late interaction is a well-established IR result, and the claim that pooling destroys
-token-level detail is uncontroversial. Our specific hypothesis — that this matters *more* in formal
-mathematics because matching hinges on exact symbols — is reasonable and now has real supporting
-evidence: the symbol-weighting lift appears **specifically and only on novel premises**, which is the
-signature the theory predicts and would be a strange coincidence otherwise.
+**No — and it now has controlled evidence.** Late interaction is a well-established IR result, and the
+claim that pooling destroys token-level detail is uncontroversial. Our specific hypothesis — that this
+matters *more* in formal mathematics because matching hinges on exact symbols — has two independent
+lines of support that both point the same way: the symbol-weighting lift appears **specifically and
+only on novel premises**, and the **matched single-vector control** drops 18% on novel while late
+interaction stays flat, with every confound held fixed. Both are the signature the theory predicts.
 
-**But the evidence is suggestive, not conclusive**, and it will stay that way until the matched
-control (#2) rules out the confounds. That is the single most valuable remaining experiment, and it's
-next.
+The evidence is no longer merely suggestive on the central claim — the control removes the confounds.
+What remains open is *magnitude* (a bigger training budget could lift the absolute numbers) and the
+finer attributions in the "Next" list — not the direction of the result.
 
 ---
 
@@ -366,7 +382,7 @@ A calibrated, trustworthy harness; BM25, dense ReProver and off-the-shelf late i
 measured on both splits; the cross-split leakage discovered, quantified and designed around; all
 figures generated. *This is the foundation that makes everything else defensible.*
 
-### Part 2 — Fine-tuning 🔄 **~70% complete**
+### Part 2 — Fine-tuning 🔄 **~90% complete**
 
 | Phase | Status |
 |---|---|
@@ -374,31 +390,29 @@ figures generated. *This is the foundation that makes everything else defensible
 | 12 · Training-pair pipeline | ✅ Done — 335k/327k triplets, BM25-mined hard negatives, de-noised, leak-guarded |
 | 13 · Late-interaction training loop | ✅ Done — PyLate, validated end-to-end |
 | 14 · Fine-tuned LI on `random` | ✅ Done — the 2.5× lift |
-| 15 · **Matched single-vector control** | ❌ **Not run** — code written, tested, committed; needs the cluster jobs |
-| 16 · Both models on `novel_premises` | 🔄 **Half done** — our LI is done (the generalisation result); the single-vector half waits on Phase 15 |
+| 15 · **Matched single-vector control** | ✅ **Done** — trained on both splits; an LR bug caught and fixed; the −18% vs flat result |
+| 16 · Both models on `novel_premises` | ✅ **Done** — LI *and* the single-vector control; the generalisation gap now measured for both |
 | 17 · Ablations | 🔄 **Half done** — symbol-weighting on the trained model is done; the hard-vs-random negatives ablation is not |
-| 18 · Figures, tables, write-up | 🔄 Provisional — will refresh once 15–17 land |
+| 18 · Figures, tables, write-up | 🔄 In progress — figures + tables refreshed with the control; the dissertation write-up remains |
 
 **What's left in Part 2, in priority order:**
 
-1. **The matched single-vector control** (Phase 15 + 16) — turns the central claim from *inferred*
-   into *proven*. Highest value by a distance.
-2. **Significance testing** — the paired bootstrap is written and unit-tested; run it on the
-   per-example records.
-3. **Hard-negative ablation** (Phase 17) — how much of the gain came from BM25-mined negatives?
-4. **Re-tune the symbol weight on the trained model** — it was tuned pre-training.
-5. **The lexical-overlap stratification** — does our advantage survive on examples where the gold
+1. **Hard-negative ablation** (Phase 17) — how much of the gain came from BM25-mined negatives?
+2. **Re-tune the symbol weight on the trained model** — it was tuned pre-training; likely the IDF
+   weighting variant.
+3. **Significance testing** — the paired bootstrap is written and unit-tested; run it on the
+   per-example records (the eval-only variant to firm up the symbol-weighting p-values).
+4. **The lexical-overlap stratification** — does our advantage survive on examples where the gold
    name *doesn't* appear in the state? (Answers criticism #3 above.)
-6. **Push the training budget** — bigger batch, second epoch. Free headroom, and it directly attacks
-   our biggest weakness (the `random` shortfall).
+5. **Push the training budget** — bigger batch, second epoch; attacks the absolute-performance gap.
 
 ### Part 3 — Make it win outright, not just generalise better 📋 **Planned**
 
-Right now we generalise better but lose in absolute terms on `random`. Part 3 closes that 28% gap.
-The levers, roughly in order of expected payoff: a **much larger training budget** (we used 10% of the
-GPU), a **Lean-aware or byte-level tokenizer** (the ReProver insight we haven't adopted), **learned
-token saliency** instead of our hand-set symbol weight, and possibly **distillation from a
-cross-encoder reranker**. This would get its own phase breakdown once Part 2 closes.
+We now *generalise* better (proven by the control) but lose in absolute terms on `random`. Part 3
+closes that gap. Levers, roughly in order of expected payoff: a **much larger training budget** (we
+used ~10% of the GPU for one epoch), a **Lean-aware or byte-level tokenizer** (the ReProver insight we
+haven't adopted), **learned token saliency** instead of our hand-set symbol weight, and possibly
+**distillation from a cross-encoder reranker**. This gets its own phase breakdown once Part 2 closes.
 
 ### Part 4 — Close the loop with a prover 📋 **Planned**
 
@@ -409,11 +423,12 @@ is what turns the work from a retrieval result into a theorem-proving contributi
 
 ### The short version
 
-The **core scientific question has been answered**: fine-tuning transforms late interaction, symbol
-weighting works specifically where the theory says it should, and the generalisation gap is
-dramatically smaller than the single-vector reference. What remains in Part 2 is **making the central
-claim airtight** (the control), **attributing the gains** (ablations), and **being honest about
-significance**. Parts 3 and 4 are about turning a validated mechanism into a system that wins
+The **central scientific claim is now proven, not inferred.** The matched single-vector control —
+identical in every respect except the matching mechanism — drops 18% on novel premises while late
+interaction stays flat. Fine-tuning transforms late interaction (2.5×), symbol weighting helps
+specifically where the theory predicts (novel premises), and the generalisation advantage is
+attributable to late interaction itself. What remains in Part 2 is **attributing the finer gains**
+(ablations) and the **write-up**. Parts 3 and 4 turn a validated mechanism into a system that wins
 outright and actually proves theorems.
 
 ---

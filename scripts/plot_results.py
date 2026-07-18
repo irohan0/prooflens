@@ -1,11 +1,12 @@
 """Render the Phase 1 result figures from results/metrics/summary.csv (never hand-typed numbers).
 
-Produces the six figures in results/README.md §figures:
+Produces the seven figures in results/README.md §figures:
   1. recall_at_k        — R@1 & R@10 per method, grouped by split (the headline).
   2. generalisation_gap — random vs novel_premises per method (the thesis story).
   3. mrr_comparison     — MRR per method, both splits.
   4. ablation_panel     — ProofLens-LI weighting OFF vs ON.
   5. finetuning_lift    — off-the-shelf vs fine-tuned R@10, vs the BM25/dense reference lines.
+  5b. matched_control   — FT-SV vs FT-LI random→novel (the airtight matched-control result).
   6. comparison_table   — the standings (ours vs published) rendered as an image.
 
 All OUR numbers come from summary.csv. Published-literature values are documented citation
@@ -46,6 +47,10 @@ SYSTEMS: list[tuple[str, str, str, dict[str, str]]] = [
      {"random": "late_interaction", "novel_premises": "late_interaction"}),
     ("li_on", "LI off-shelf\n(ON)", "late-interaction",
      {"random": "late_interaction_weighted", "novel_premises": "late_interaction_weighted"}),
+    ("sv_base", "SV off-shelf\n(gte-modernbert)", "single-vector",
+     {"random": "dense_sv_base_random", "novel_premises": "dense_sv_base_novel"}),
+    ("ft_sv", "Matched SV\ncontrol (FT)", "single-vector (FT)",
+     {"random": "dense_sv_ft_random_lr3e6", "novel_premises": "dense_sv_ft_novel_lr3e6"}),
     ("ft_li_off", "ProofLens-LI\nfine-tuned (OFF)", "late-interaction (FT)",
      {"random": "late_interaction_ft_random", "novel_premises": "late_interaction_ft_novel"}),
     ("ft_li_on", "ProofLens-LI\nfine-tuned (ON)", "late-interaction (FT)",
@@ -201,7 +206,8 @@ def plot_generalisation_gap(latest: dict, out_dir: Path) -> list[Path]:
     ax.set_ylabel("R@10 (%)")
     ax.set_ylim(0, max(max(rnd), max(nov)) * 1.3)
     ax.set_title("Generalisation: random → novel_premises (R@10)\n"
-                 "the single-vector dense drops ~28%; fine-tuned late interaction barely moves",
+                 "both trained single-vector systems drop (dense −28%, matched control −18%); "
+                 "fine-tuned late interaction stays flat",
                  fontweight="bold")
     ax.legend(loc="upper right")
     ax.grid(axis="y", alpha=0.3)
@@ -346,6 +352,53 @@ def plot_finetuning_lift(latest: dict, out_dir: Path) -> list[Path]:
     return _save(fig, out_dir, "finetuning_lift")
 
 
+# -- 5b. matched control: the thesis in one figure --------------------------------------------
+def plot_matched_control(latest: dict, out_dir: Path) -> list[Path]:
+    """FT-SV vs FT-LI, random→novel. Everything between the two is identical (same triplets, hard
+    negatives, base lineage, budget, lr=3e-6, frozen harness) EXCEPT single-vector cosine vs
+    multi-vector MaxSim. The single-vector control drops on novel; late interaction stays flat — the
+    airtight generalisation result. Draws the paired random→novel lines with the % gap annotated."""
+    have = all(_row(latest, s, sp) for s in ("ft_sv", "ft_li_on") for sp in SPLIT_ORDER)
+    if not have:
+        return []
+    fig, ax = plt.subplots(figsize=(8.2, 5.6))
+    x = [0, 1]
+    # dy: which way each series' value labels point, so the two never collide where the lines cross
+    #     (single-vector below its markers, late-interaction above).
+    series = [
+        ("ft_sv", "Matched single-vector control", "#C44E52", "o", -1),
+        ("ft_li_on", "ProofLens-LI (late interaction)", "#2A7F3E", "s", +1),
+    ]
+    top = 0.0
+    for sysk, label, color, marker, dy in series:
+        rnd = _get(latest, sysk, "random", "R@10") or 0.0
+        nov = _get(latest, sysk, "novel_premises", "R@10") or 0.0
+        top = max(top, rnd, nov)
+        ax.plot(x, [rnd, nov], color=color, marker=marker, markersize=11, lw=2.6, label=label,
+                zorder=3)
+        for xi, v in zip(x, (rnd, nov), strict=True):
+            ax.annotate(f"{v * 100:.1f}", (xi, v), color=color, fontweight="bold", fontsize=11,
+                        ha="center", va="bottom" if dy > 0 else "top",
+                        xytext=(0, 9 * dy), textcoords="offset points")
+        g = (nov - rnd) / rnd * 100 if rnd else 0.0
+        ax.annotate(f"{g:+.0f}%", (1, nov), color=color, fontweight="bold", fontsize=12,
+                    ha="left", va="center", xytext=(14, 6 * dy), textcoords="offset points")
+    ax.set_xticks(x)
+    ax.set_xticklabels(["random\n(seen distribution)", "novel_premises\n(unseen lemmas)"],
+                       fontsize=10)
+    ax.set_xlim(-0.35, 1.5)
+    ax.set_ylim(0, top * 1.22)
+    ax.set_ylabel("R@10 (%)")
+    ax.set_title("The matched control: only the matching mechanism differs\n"
+                 "single-vector drops on novel premises; late interaction stays flat",
+                 fontweight="bold", fontsize=12)
+    ax.legend(loc="lower left", fontsize=9)
+    ax.grid(axis="y", alpha=0.3)
+    _percent_yaxis(ax)
+    fig.tight_layout()
+    return _save(fig, out_dir, "matched_control")
+
+
 # -- 6. comparison table image ----------------------------------------------------------------
 def render_comparison_table(latest: dict, out_dir: Path) -> list[Path]:
     def pct(v):
@@ -418,6 +471,7 @@ def main() -> None:
         + plot_mrr(latest, out)
         + plot_ablation(latest, out)
         + plot_finetuning_lift(latest, out)
+        + plot_matched_control(latest, out)
         + render_comparison_table(latest, out)
     )
     for p in produced:
