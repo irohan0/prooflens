@@ -42,22 +42,25 @@ def main() -> int:
         print("  (LeanDojo requires Python < 3.12 — our main 3.13 venv will NOT work.)")
         return 2
 
-    # The canonical tiny example repo from the LeanDojo docs. If this commit is stale, update it to
-    # the current default branch commit shown at github.com/yangky11/lean4-example.
+    # The canonical tiny example repo. Pin the commit whose lean-toolchain matches the INSTALLED
+    # lean-dojo (both released in lockstep): lean-dojo 4.20.0 <-> lean4-example@main pins
+    # leanprover/lean4:v4.20.0. Using a nightly-pinned commit breaks `lake build` (manifest version
+    # mismatch). If your lean-dojo is a different version, set the commit to the lean4-example
+    # commit whose lean-toolchain names your lean-dojo's Lean version.
     repo = LeanGitRepo(
         "https://github.com/yangky11/lean4-example",
-        "7d711f6da4584ecb7d4f057715e1f72ba175c910",
+        "7761283d0aed994cd1c7e893786212d2a01d159e",
     )
-    theorem = Theorem(repo, "Lean4Example.lean", "hello_world")
+    # `foo : a + 1 = Nat.succ a` is closed by `rfl` (definitional) -> a clean ProofFinished, which
+    # exercises the full run_tac -> proof-closed path, not just interaction.
+    theorem = Theorem(repo, "Lean4Example.lean", "foo")
     print(f"[probe] tracing + launching Dojo on {theorem.full_name} "
           f"({repo.url}) — first run clones+builds, a few minutes ...")
 
     try:
         with Dojo(theorem) as (dojo, init_state):
             print(f"[probe] Dojo launched. initial state:\n{getattr(init_state, 'pp', init_state)}")
-            # hello_world : a = a style goal; `rfl` should close it. If the goal differs, this may
-            # return a LeanError — that still proves the INTERACTION works (which is what we test).
-            result = dojo.run_tac(init_state, "rfl")
+            result = dojo.run_tac(init_state, "rfl")     # closes `foo` definitionally
             print(f"[probe] ran `rfl` -> {type(result).__name__}: "
                   f"{getattr(result, 'pp', getattr(result, 'error', result))}")
             if isinstance(result, ProofFinished):
