@@ -29,6 +29,11 @@ COLBERT_CHECKPOINT = "lightonai/GTE-ModernColBERT-v1"
 # Base for the matched single-vector control — the ModernBERT lineage GTE-ModernColBERT is built on,
 # so the LI-vs-single-vector comparison holds the base fixed and varies only the matching mechanism.
 SV_BASE = "Alibaba-NLP/gte-modernbert-base"
+# ReProver's retrieval-augmented tactic generator (Part 4 / prover loop). It generates the next
+# tactic from the proof state PLUS a list of retrieved premises in its context — so we hold this
+# generator fixed and vary only which retriever supplies the premises (none / BM25 / FT-SV / FT-LI),
+# isolating the retriever's contribution to downstream tactic generation and proof success.
+TACGEN = "kaiyuy/leandojo-lean4-retriever-tacgen-byt5-small"
 
 
 def _md5(path: Path) -> str:
@@ -75,7 +80,7 @@ def main() -> None:
     ap.add_argument("--out", required=True, help="scratch data root, e.g. ~/scratch/prooflens_data")
     ap.add_argument(
         "--only",
-        choices=["benchmark", "reprover", "colbert", "sv_base", "models"],
+        choices=["benchmark", "reprover", "colbert", "sv_base", "tacgen", "models"],
         help="download only one component (default: everything)",
     )
     args = ap.parse_args()
@@ -89,6 +94,8 @@ def main() -> None:
         download_hf_model(COLBERT_CHECKPOINT, out)
     if args.only in (None, "models", "sv_base"):
         download_hf_model(SV_BASE, out)
+    if args.only in (None, "models", "tacgen"):
+        download_hf_model(TACGEN, out)
 
     print("\n[done] verify the tree above, then submit jobs with "
           "HF_HUB_OFFLINE=1 TRANSFORMERS_OFFLINE=1.")
