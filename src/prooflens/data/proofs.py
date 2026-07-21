@@ -1,7 +1,9 @@
 """Proof-split loader: split files -> (state_before, gold_premises) evaluation Examples.
 
 One example = one tactic that uses >=1 (located) premise; query = `state_before`; gold = the
-premises that specific tactic used (not the whole theorem). Gold is resolved exactly as ReProver's
+premises that specific tactic used (not the whole theorem). The Example also carries the raw
+`tactic` text — unused by retrieval, and the *generation target* for Phase 21's offline
+tactic-generation eval (`prooflens.eval.generate_eval`). Gold is resolved exactly as ReProver's
 `get_all_pos_premises`: each provenance is mapped via `corpus.locate_premise(def_path, def_pos)`
 (position-containment) and provenances that cannot be located are dropped; a tactic left with no
 gold is skipped entirely (ReProver `evaluate.py` does `if len(all_pos_premises) == 0: continue`).
@@ -30,6 +32,7 @@ class Example:
     file_path: str              # theorem's file (for accessibility)
     thm_pos: Pos                # theorem start (accessibility position)
     state: str                  # state_before (the query)
+    tactic: str                 # the ground-truth tactic, RAW as stored in the split file
     gold: frozenset[str]        # gold premise UIDs (path::full_name)
 
 
@@ -63,6 +66,13 @@ def examples_from_theorems(theorems: Iterable[dict], corpus: Corpus) -> Iterator
                 file_path=thm["file_path"],
                 thm_pos=thm_pos,
                 state=tac["state_before"],
+                # RAW tactic text, exactly as the split file stores it. ReProver's generation
+                # datamodule targets `remove_marks(tac["tactic"])`; we keep the data layer
+                # faithful to the file and apply `remove_marks` in the generation layer
+                # (prooflens.generation.format) so the transformation is visible where it
+                # matters. `tac["tactic"]` is already mark-free (the marked variant lives in
+                # `annotated_tactic[0]`), so remove_marks is defensive, exactly as in ReProver.
+                tactic=tac["tactic"],
                 gold=frozenset(gold),
             )
 

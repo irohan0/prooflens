@@ -55,6 +55,7 @@ class Corpus:
         self._imports = imports
         self.all_premises: list[Premise] = [p for ps in premises_by_path.values() for p in ps]
         self._trans_cache: dict[str, set[str]] = {}
+        self._by_uid: dict[str, Premise] | None = None
 
     # -- construction -------------------------------------------------------------------------
     @classmethod
@@ -92,6 +93,18 @@ class Corpus:
     @property
     def paths(self) -> list[str]:
         return list(self._by_path)
+
+    def premise_by_uid(self, uid: str) -> Premise | None:
+        """Look up a premise by its `uid` (built lazily, memoised); None if absent.
+
+        Needed to turn a retriever's persisted top-k (a list of UIDs in
+        `results/metrics/<config>_<split>.json`) back into premise text for the Phase-21
+        tactic-generation eval, without re-running retrieval. `uid` is unique by construction
+        (path, full_name, start), verified on the real corpus in Phase 4.
+        """
+        if self._by_uid is None:
+            self._by_uid = {p.uid: p for p in self.all_premises}
+        return self._by_uid.get(uid)
 
     def locate_premise(self, path: str, pos: Pos) -> Premise | None:
         """Premise whose span contains `pos` (ReProver `locate_premise`); None if absent."""

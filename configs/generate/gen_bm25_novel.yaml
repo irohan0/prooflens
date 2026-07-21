@@ -1,0 +1,32 @@
+# Phase 21 -- tactic generation, condition: bm25 | split: novel_premises
+# BM25's persisted top-k -- the sparse lexical baseline, downstream.
+# The generator block is IDENTICAL across every configs/generate/*.yaml -- only
+# `premises:` changes. That is what makes the comparison attributable to retrieval.
+name: gen_bm25_novel
+
+generator:
+  type: byt5
+  hf_id: kaiyuy/leandojo-lean4-retriever-tacgen-byt5-small
+  path: ${MODELS_DIR}/kaiyuy__leandojo-lean4-retriever-tacgen-byt5-small
+  max_inp_seq_len: 2300      # ReProver generation/confs/cli_lean4_random.yaml
+  max_oup_seq_len: 512
+  length_penalty: 0.0
+
+data:
+  corpus_path: ${DATA_ROOT}/corpus.jsonl
+  splits_dir: ${DATA_ROOT}/
+  split_file: test.json
+
+premises:
+  source: retrieval_json
+  retrieval_results: results/metrics/bm25_novel_premises.json
+  num_retrieved: 100        # ReProver eval_num_retrieved; the 2300-byte
+                            # budget decides how many actually fit
+
+eval:
+  split: novel_premises
+  num_samples: 8             # beam width == number of returned candidates (ReProver passes
+                             # num_samples to both num_beams and num_return_sequences)
+  k_list: [1, 8]
+
+seed: 42

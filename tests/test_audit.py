@@ -112,7 +112,8 @@ def _acc_sizes():
 def test_gold_name_in_state_can_be_false():
     # a synthetic example whose state does NOT name its gold premise -> rate 0
     ex = Example(eid="e", theorem="t", file_path="f", thm_pos=(1, 1),
-                 state="⊢ some goal without any lemma name", gold=frozenset({"F::my_lemma@1,1"}))
+                 state="⊢ some goal without any lemma name", tactic="exact my_lemma",
+                 gold=frozenset({"F::my_lemma@1,1"}))
     a = audit_examples([ex])
     assert a["gold_name_in_state_rate"] == 0.0
 

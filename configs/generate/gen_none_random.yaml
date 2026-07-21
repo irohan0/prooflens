@@ -1,0 +1,30 @@
+# Phase 21 -- tactic generation, condition: none | split: random
+# the FLOOR: no premises at all, just the proof state. Any retriever that does not beat
+# this is contributing nothing downstream.
+# The generator block is IDENTICAL across every configs/generate/*.yaml -- only
+# `premises:` changes. That is what makes the comparison attributable to retrieval.
+name: gen_none_random
+
+generator:
+  type: byt5
+  hf_id: kaiyuy/leandojo-lean4-retriever-tacgen-byt5-small
+  path: ${MODELS_DIR}/kaiyuy__leandojo-lean4-retriever-tacgen-byt5-small
+  max_inp_seq_len: 2300      # ReProver generation/confs/cli_lean4_random.yaml
+  max_oup_seq_len: 512
+  length_penalty: 0.0
+
+data:
+  corpus_path: ${DATA_ROOT}/corpus.jsonl
+  splits_dir: ${DATA_ROOT}/
+  split_file: test.json
+
+premises:
+  source: none
+
+eval:
+  split: random
+  num_samples: 8             # beam width == number of returned candidates (ReProver passes
+                             # num_samples to both num_beams and num_return_sequences)
+  k_list: [1, 8]
+
+seed: 42
