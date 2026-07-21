@@ -92,16 +92,23 @@ One epoch on a single GPU takes off-the-shelf ColBERT (which *loses to BM25*) to
 
 ![Fine-tuning lift](assets/finetuning_lift.png)
 
-### Symbol weighting works — and only where the theory predicts
+### Symbol weighting — a consistent lift, several times larger on novel premises
 
-| Split | Metric | OFF | ON | Change | Beats noise? |
-|---|---|--:|--:|--:|:--:|
-| random | R@1 | 8.32 | 8.59 | +0.27 | No (~0.5 SE) |
-| random | R@10 | 27.46 | 27.66 | +0.20 | No (~0.2 SE) |
-| **novel** | R@1 | 7.55 | 8.48 | **+0.93** | **Yes (~2.3 SE)** |
-| **novel** | R@10 | 27.09 | 28.46 | **+1.37** | **Yes (~2.0 SE)** |
+| Split | Metric | OFF | ON | Change |
+|---|---|--:|--:|--:|
+| random | R@1 | 8.32 | 8.59 | +0.27 |
+| random | R@10 | 27.46 | 27.66 | +0.20 |
+| **novel** | R@1 | 7.55 | 8.48 | **+0.93** |
+| **novel** | R@10 | 27.09 | 28.46 | **+1.37** |
 
-We claim the effect **only on `novel_premises`** — exactly where symbolic matching is all that's left.
+The lift is positive on every metric and both splits, and is **~3–7× larger on `novel_premises`** than
+on `random` — the pattern the theory predicts, since a premise you have never seen cannot be
+memorised, only symbol-matched. The ablation is clean by construction: ON reuses OFF's premise index
+*and* query vectors, so only the token weights differ.
+
+**We do not yet attach a significance claim to this.** Formal paired testing
+(`scripts/significance.py` — bootstrap + permutation over the per-example records) is written and
+unit-tested but not yet run on these records; see limitation 6.
 
 ![Symbol-weighting ablation](assets/ablation_panel.png)
 
@@ -188,8 +195,12 @@ construction) is the load-bearing result. None of our fine-tuned numbers carry t
    compositional lexical matching (a narrower claim).
 4. **Downstream tie** — the retrieval edge does not separate LI from single-vector once fed to a
    generator (Part 4).
-5. **Symbol weight is hand-set** (`w=4.0`, tuned pre-training); a learned saliency would be better.
-6. **Single seed**, no variance bars yet.
+5. **Symbol weight is hand-set** (`w=4.0`, tuned pre-training on a test-split subset — being re-run on
+   validation); a learned saliency would be more principled.
+6. **Single seed, and significance testing is incomplete.** No run-to-run variance estimate; the paired
+   bootstrap + permutation test is written and unit-tested but has not been run on the
+   symbol-weighting records, so that ablation is reported as a measured lift, not a significant one.
+   (The matched control and the structural/lexical split *are* backed by paired bootstrap CIs.)
 7. **Late interaction is expensive** — ~69× the index footprint of single-vector; latency untested.
 
 ---
