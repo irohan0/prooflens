@@ -33,6 +33,9 @@ __pycache__/
 .mypy_cache/
 *.egg-info/
 
+# --- Generated seed-variant configs (derived from base configs by make_seed_configs.py) ---
+configs/seeds/
+
 # --- Slurm logs ---
 slurm-*.out
 slurm-*.err
