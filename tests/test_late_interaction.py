@@ -275,6 +275,153 @@ def test_li_weighting_off_is_unweighted_maxsim():
         assert score == pytest.approx(naive[uid], abs=1e-4)
 
 
+# -- Phase 22: IDF-weighted modes -------------------------------------------------------------
+
+def _idf_retriever(mode, encoder, idf_table, **extra):
+    """A fitted LI retriever in an IDF weighting mode, with the IDF table injected (no file)."""
+    corpus = load_corpus(str(FIX / "corpus.jsonl"))
+    r = LateInteractionRetriever(
+        encoder=encoder,
+        weighting={"enabled": True, "mode": mode, "idf_fallback": 1.0, **extra},
+    )
+    r._idf = idf_table                       # inject (bypasses file loading)
+    r.build_index(corpus)
+    return corpus, r
+
+
+def test_idf_mode_weights_each_token_by_its_idf():
+    from prooflens.retrievers.token_idf import TokenIDF
+
+    # FakeColBERT tokenizes on whitespace, so IDF keys are whole words.
+    idf = TokenIDF({"le_trans": 5.0, "a": 1.0, "b": 1.0}, n_docs=3)
+    enc = FakeColBERT()
+    corpus, r = _idf_retriever("idf", enc, idf)
+    all_uids = {p.uid for p in corpus.all_premises}
+    q = "le_trans a b"
+    e_q, tokens = enc.encode_query_with_tokens(q)
+    weights = np.array([idf.weight(t, 1.0) for t in tokens], dtype=np.float32)  # [5,1,1]
+    naive = {
+        p.uid: maxsim_score(
+            e_q, enc.encode_documents([premise_document(p.full_name, p.code)])[0], weights
+        )
+        for p in corpus.all_premises
+    }
+    for uid, score in r.retrieve(q, all_uids, k=6):
+        assert score == pytest.approx(naive[uid], abs=1e-4)
+
+
+def test_idf_mode_unknown_token_uses_fallback():
+    from prooflens.retrievers.token_idf import TokenIDF
+
+    idf = TokenIDF({"known": 9.0}, n_docs=2)     # 'mystery' is absent -> fallback
+    enc = FakeColBERT()
+    corpus, r = _idf_retriever("idf", enc, idf, idf_fallback=0.5)
+    all_uids = {p.uid for p in corpus.all_premises}
+    q = "known mystery"
+    e_q, tokens = enc.encode_query_with_tokens(q)
+    weights = np.array([9.0 if t == "known" else 0.5 for t in tokens], dtype=np.float32)
+    naive = {
+        p.uid: maxsim_score(
+            e_q, enc.encode_documents([premise_document(p.full_name, p.code)])[0], weights
+        )
+        for p in corpus.all_premises
+    }
+    for uid, score in r.retrieve(q, all_uids, k=6):
+        assert score == pytest.approx(naive[uid], abs=1e-4)
+
+
+def test_symbol_idf_mode_blends_idf_on_symbols_with_default_on_filler():
+    from prooflens.retrievers.token_idf import TokenIDF
+
+    idf = TokenIDF({"le_trans": 7.0, "≤": 3.0}, n_docs=4)
+    enc = FakeColBERT()
+    corpus, r = _idf_retriever("symbol_idf", enc, idf, default_weight=1.0)
+    all_uids = {p.uid for p in corpus.all_premises}
+    q = "le_trans ≤ ⊢"          # le_trans + ≤ are symbols; ⊢ is filler
+    e_q, tokens = enc.encode_query_with_tokens(q)
+    weights = np.array(
+        [idf.weight(t, 1.0) if is_symbol_subword(t, enc.special_tokens) else 1.0 for t in tokens],
+        dtype=np.float32,
+    )
+    naive = {
+        p.uid: maxsim_score(
+            e_q, enc.encode_documents([premise_document(p.full_name, p.code)])[0], weights
+        )
+        for p in corpus.all_premises
+    }
+    for uid, score in r.retrieve(q, all_uids, k=6):
+        assert score == pytest.approx(naive[uid], abs=1e-4)
+
+
+def test_idf_scale_multiplies_symbol_weights_in_blend():
+    from prooflens.retrievers.token_idf import TokenIDF
+
+    idf = TokenIDF({"le_trans": 2.0}, n_docs=4)
+    enc = FakeColBERT()
+    weights_at = {}
+    for scale in (1.0, 3.0):
+        corpus, r = _idf_retriever("symbol_idf", enc, idf, idf_scale=scale)
+        w = r._token_weights(["le_trans", "⊢"], enc)
+        weights_at[scale] = w
+    # symbol 'le_trans' weight scales 2.0 -> 6.0; filler '⊢' stays at default 1.0
+    assert weights_at[1.0][0] == pytest.approx(2.0)
+    assert weights_at[3.0][0] == pytest.approx(6.0)
+    assert weights_at[1.0][1] == pytest.approx(1.0)
+    assert weights_at[3.0][1] == pytest.approx(1.0)
+
+
+def test_idf_scaling_all_tokens_does_not_change_ranking():
+    # Pure-idf mode is scale-invariant: multiplying every weight by c reorders nothing.
+    from prooflens.retrievers.token_idf import TokenIDF
+
+    idf = TokenIDF({"le_trans": 5.0, "le_refl": 2.0, "a": 1.0}, n_docs=3)
+    enc = FakeColBERT()
+    q = "le_trans le_refl a"
+    corpus1, r1 = _idf_retriever("idf", enc, idf, idf_scale=1.0)
+    corpus2, r2 = _idf_retriever("idf", enc, idf, idf_scale=10.0)
+    uids = {p.uid for p in corpus1.all_premises}
+    order1 = [u for u, _ in r1.retrieve(q, uids, k=6)]
+    order2 = [u for u, _ in r2.retrieve(q, uids, k=6)]
+    assert order1 == order2
+
+
+def test_unknown_weighting_mode_raises():
+    from prooflens.retrievers.token_idf import TokenIDF
+
+    enc = FakeColBERT()
+    corpus, r = _idf_retriever("nonsense", enc, TokenIDF({"a": 1.0}, 1))
+    uids = {p.uid for p in corpus.all_premises}     # real accessible set -> weighting path runs
+    with pytest.raises(ValueError, match="unknown weighting mode"):
+        r.retrieve("le_trans a", uids, k=1)
+
+
+def test_idf_mode_without_table_or_path_raises():
+    # Missing table + no index_dir/path -> a clear error, not a silent wrong weighting.
+    corpus = load_corpus(str(FIX / "corpus.jsonl"))
+    r = LateInteractionRetriever(
+        encoder=FakeColBERT(), weighting={"enabled": True, "mode": "idf"}
+    )
+    r.build_index(corpus)
+    uids = {p.uid for p in corpus.all_premises}
+    with pytest.raises(RuntimeError, match="idf weighting needs"):
+        r.retrieve("le_trans a", uids, k=1)
+
+
+def test_idf_table_loads_from_index_dir(tmp_path):
+    from prooflens.retrievers.token_idf import TokenIDF
+
+    TokenIDF({"le_trans": 4.0}, n_docs=2).save(tmp_path / "token_idf.json")
+    corpus = load_corpus(str(FIX / "corpus.jsonl"))
+    r = LateInteractionRetriever(
+        index_dir=str(tmp_path), encoder=FakeColBERT(),
+        weighting={"enabled": True, "mode": "idf"},
+    )
+    r.build_index(corpus)
+    uids = {p.uid for p in corpus.all_premises}
+    res = r.retrieve("le_trans a", uids, k=3)      # loads token_idf.json from index_dir, no error
+    assert res and r._idf is not None and r._idf.weight("le_trans") == pytest.approx(4.0)
+
+
 # -- real PyLate ColBERT smoke (opt-in; runs on the cluster) ----------------------------------
 
 _HAS_PYLATE = importlib.util.find_spec("pylate") is not None

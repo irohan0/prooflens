@@ -34,6 +34,7 @@ share one premise representation, so the sparse-vs-late-interaction comparison i
 from __future__ import annotations
 
 import json
+import os
 import re
 from pathlib import Path
 
@@ -41,6 +42,7 @@ import numpy as np
 
 from prooflens.retrievers.base import Retriever
 from prooflens.retrievers.bm25 import premise_document
+from prooflens.retrievers.token_idf import TokenIDF
 from prooflens.utils.logging import get_logger
 
 log = get_logger("late_interaction")
@@ -196,6 +198,7 @@ class LateInteractionRetriever(Retriever):
         self.weighting = weighting or {"enabled": False}
         self.device = device
         self._encoder = encoder
+        self._idf: TokenIDF | None = None        # lazily loaded for idf / symbol_idf modes
         self._tok: np.ndarray | None = None     # [T, dim] float32, all premise tokens concatenated
         self._off: np.ndarray | None = None      # [N+1] int64, CSR offsets into _tok
         self._uids: list[str] = []
@@ -316,6 +319,62 @@ class LateInteractionRetriever(Retriever):
             [sw if is_symbol_subword(t, specials) else dw for t in tokens], dtype=np.float32
         )
 
+    def _get_idf(self) -> TokenIDF:
+        """Lazily load the corpus IDF table (Phase 22). Path is `weighting['idf_path']` if set,
+        else `<index_dir>/token_idf.json`. Injectable for the hermetic tests (set `self._idf`)."""
+        if self._idf is not None:
+            return self._idf
+        raw = self.weighting.get("idf_path")
+        if raw:
+            path = Path(os.path.expandvars(raw))
+        elif self.index_dir:
+            path = Path(os.path.expandvars(self.index_dir)) / "token_idf.json"
+        else:
+            raise RuntimeError(
+                "idf weighting needs weighting['idf_path'] or an index_dir holding token_idf.json"
+            )
+        if not path.exists():
+            raise FileNotFoundError(
+                f"IDF table not found at {path} — run scripts/build_token_idf.py first"
+            )
+        self._idf = TokenIDF.load(path)
+        log.info("late_interaction: loaded IDF table (%d tokens, N=%d) from %s",
+                 len(self._idf), self._idf.n_docs, path)
+        return self._idf
+
+    def _token_weights(self, tokens: list[str], encoder) -> np.ndarray:
+        """Per-query-token MaxSim weights, dispatching on `weighting['mode']`:
+
+        - ``"symbol"`` (default) — Phase-9 flat weighting (`symbol_weight` vs `default_weight`).
+        - ``"idf"`` — Phase-22 **data-derived**: every token weighted by its corpus IDF, so a rare
+          symbol counts more than a common one. Scale-invariant (only relative weights matter).
+        - ``"symbol_idf"`` — the direct upgrade of Phase 9: **symbol** tokens weighted by their IDF
+          (instead of a flat 4.0), non-symbol tokens kept at `default_weight`. Here the IDF scale
+          relative to the default matters, so `idf_scale` is available (default 1.0).
+
+        `idf_fallback` (default 1.0) is used for tokens absent from the table (special tokens; any
+        sub-word unseen in premises) — deliberately neutral so they neither help nor hurt.
+        """
+        mode = self.weighting.get("mode", "symbol")
+        if mode == "symbol":
+            return self._symbol_weights(tokens, encoder)
+        idf = self._get_idf()
+        fb = float(self.weighting.get("idf_fallback", 1.0))
+        scale = float(self.weighting.get("idf_scale", 1.0))
+        if mode == "idf":
+            return np.array([scale * idf.weight(t, fb) for t in tokens], dtype=np.float32)
+        if mode == "symbol_idf":
+            dw = float(self.weighting.get("default_weight", 1.0))
+            specials = getattr(encoder, "special_tokens", frozenset())
+            return np.array(
+                [scale * idf.weight(t, fb) if is_symbol_subword(t, specials) else dw
+                 for t in tokens],
+                dtype=np.float32,
+            )
+        raise ValueError(
+            f"unknown weighting mode {mode!r}; expected 'symbol', 'idf', or 'symbol_idf'"
+        )
+
     def retrieve(self, state: str, accessible: set[str], k: int) -> list[tuple[str, float]]:
         if self._tok is None or self._off is None:
             raise RuntimeError("build_index must be called before retrieve")
@@ -340,7 +399,7 @@ class LateInteractionRetriever(Retriever):
             # ON: token-aligned query encode so symbol tokens can be up-weighted (same query
             # vectors as OFF — the ablation differs only by the weights).
             e_q, q_tokens = enc.encode_query_with_tokens(state)     # [n_q, dim] + aligned strings
-            weights = self._symbol_weights(q_tokens, enc)           # [n_q]
+            weights = self._token_weights(q_tokens, enc)            # [n_q] (mode-dispatched)
         else:                                                       # OFF: unchanged from Phase 8
             e_q = enc.encode_queries([state])[0]                    # [n_q, dim], unit-norm
             weights = np.ones(e_q.shape[0], dtype=np.float32)       # [n_q]
