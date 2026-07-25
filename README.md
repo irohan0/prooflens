@@ -28,7 +28,7 @@ edge is **largely lexical** rather than deeply structural. All of this is measur
 but a lossy compression that blurs the one decisive token.
 
 **Late interaction (ours):** keep all token vectors; score with **MaxSim**, our twist being the
-weight `w(i)` that up-weights symbol tokens:
+weight `w(i)` that up-weights a query's most discriminative tokens (set from each token's corpus IDF):
 
 $$\text{score}(s, p) = \sum_i \; w(i)\cdot \max_j \; \text{sim}\big(E_s[i],\, E_p[j]\big)$$
 
@@ -52,7 +52,7 @@ system. Recall in %. `random` n=2,811; `novel_premises` n=4,357. Single seed (42
 | Single-vector, off-the-shelf (gte-modernbert) | no | 4.01 | 11.41 | 4.28 | 15.36 |
 | Dense ReProver (published single-vector) | yes | 13.04 | **38.59** | — | *27.6*¹ |
 | **Matched single-vector control, fine-tuned** | yes | **8.97** | **32.00** | 6.66 | 26.16 |
-| **ProofLens-LI, fine-tuned + symbol weighting** | yes | 8.59 | 27.66 | **8.48** | **28.46** |
+| **ProofLens-LI, fine-tuned + IDF weighting** | yes | 8.56 | 27.80 | **8.56** | **28.92** |
 
 <sub>¹ No *clean* dense number is obtainable on `novel_premises` from the public checkpoint (see
 [The leak we caught](#the-leak-we-caught)) — we cite ReProver's published figure. Every other cell is
@@ -92,23 +92,26 @@ One epoch on a single GPU takes off-the-shelf ColBERT (which *loses to BM25*) to
 
 ![Fine-tuning lift](assets/finetuning_lift.png)
 
-### Symbol weighting — a consistent lift, several times larger on novel premises
+### Symbol weighting — a significant, data-derived lift, concentrated on novel premises
 
-| Split | Metric | OFF | ON | Change |
-|---|---|--:|--:|--:|
-| random | R@1 | 8.32 | 8.59 | +0.27 |
-| random | R@10 | 27.46 | 27.66 | +0.20 |
-| **novel** | R@1 | 7.55 | 8.48 | **+0.93** |
-| **novel** | R@10 | 27.09 | 28.46 | **+1.37** |
+Turning the token weighting **on vs off**, paired over the per-example records (bootstrap 95% CI +
+sign-flip permutation; ✅ = CI excludes 0 **and** p < 0.05):
 
-The lift is positive on every metric and both splits, and is **~3–7× larger on `novel_premises`** than
-on `random` — the pattern the theory predicts, since a premise you have never seen cannot be
-memorised, only symbol-matched. The ablation is clean by construction: ON reuses OFF's premise index
-*and* query vectors, so only the token weights differ.
+| split | R@1 | R@10 | MRR | nDCG@10 |
+|---|--:|--:|--:|--:|
+| **novel** | +0.93 ✅ | +1.38 ✅ | +1.58 ✅ | +1.34 ✅ |
+| random | +0.27 | +0.21 | +0.79 ✅ | +0.39 ✅ |
 
-**We do not yet attach a significance claim to this.** Formal paired testing
-(`scripts/significance.py` — bootstrap + permutation over the per-example records) is written and
-unit-tested but not yet run on these records; see limitation 6.
+(percentage-point lift; all p ≤ 2e-4 on novel.) On **novel premises every metric improves
+significantly**; on `random`, only the ranking-quality metrics (MRR, nDCG) do. So the weighting
+reliably lifts *where* the gold premise ranks on both splits, and *whether* it enters the top-k on
+novel — exactly where symbolic precision matters most and a premise cannot be memorised. The ablation
+is clean by construction: on and off reuse the same premise index *and* query vectors, so only the
+token weights differ.
+
+The reported system sets the weight from each token's **corpus IDF instead of a hand-picked
+constant** — data-derived and, being scale-invariant, tuning-free. IDF matches or beats the old
+constant (novel MRR +0.70, p = 0.008), so there is no tuned magic number left in the score.
 
 ![Symbol-weighting ablation](assets/ablation_panel.png)
 
@@ -195,12 +198,13 @@ construction) is the load-bearing result. None of our fine-tuned numbers carry t
    compositional lexical matching (a narrower claim).
 4. **Downstream tie** — the retrieval edge does not separate LI from single-vector once fed to a
    generator (Part 4).
-5. **Symbol weight is hand-set** (`w=4.0`, tuned pre-training on a test-split subset — being re-run on
-   validation); a learned saliency would be more principled.
-6. **Single seed, and significance testing is incomplete.** No run-to-run variance estimate; the paired
-   bootstrap + permutation test is written and unit-tested but has not been run on the
-   symbol-weighting records, so that ablation is reported as a measured lift, not a significant one.
-   (The matched control and the structural/lexical split *are* backed by paired bootstrap CIs.)
+5. ~~Symbol weight is hand-set~~ **— resolved.** The weight is now each token's **corpus IDF**
+   (data-derived, scale-invariant, tuning-free), not a hand-picked constant; it matches or beats the
+   old `w=4.0` (novel MRR +0.70, p = 0.008). A *learned* saliency head remains possible future work.
+6. **Single seed** — no run-to-run variance estimate yet; every headline number is seed 42 (a
+   multi-seed run is in progress). Significance *is* now attached to the symbol-weighting ablation
+   (paired bootstrap + permutation: novel significant on all four metrics, random on MRR/nDCG), and to
+   the matched control and the structural/lexical split.
 7. **Late interaction is expensive** — ~69× the index footprint of single-vector; latency untested.
 
 ---
@@ -210,7 +214,7 @@ construction) is the load-bearing result. None of our fine-tuned numbers carry t
 | Part | State |
 |---|---|
 | **1 — Harness & baselines** | ✅ **Complete** — calibrated (~3% of published), leakage caught & quantified |
-| **2 — Fine-tuning & the central experiment** | 🔄 **~90%** — 2.5× lift, matched control done (thesis holds); left: hard-negative ablation, symbol-weight re-tune, significance runs, multi-seed, write-up |
+| **2 — Fine-tuning & the central experiment** | 🔄 **~95%** — 2.5× lift, matched control done (thesis holds), IDF weighting + ablation significance done; left: multi-seed, hard-negative ablation, write-up |
 | **3 — Win outright** | 📋 Planned — bigger budget, Lean-aware/byte-level tokenizer, learned saliency |
 | **4 — Close the loop with a prover** | 🔄 Downstream eval **complete**; live proof search blocked by a lean-dojo/Lean-4.20 REPL incompatibility (env work done, resumable) |
 
@@ -226,10 +230,11 @@ src/prooflens/
   generation/       # ReProver tactic generator + input formatting (Part 4)
   eval/             # metrics (pure, unit-tested) + retrieval & generation eval loops
   utils/            # io, seeding, logging
-scripts/            # download_data, build_index/pairs, train_li/sv, run_eval, run_generate,
-                    # significance, generation_compare, leakage/lexical stratification, plot_results
+scripts/            # download_data, build_index/pairs, build_token_idf, train_li/sv, run_eval,
+                    # run_generate, significance, expand_metrics, generation_compare,
+                    # leakage/lexical stratification, plot_results
 slurm/              # cluster jobscripts
-tests/              # 225 tests: metrics, loaders, accessibility, every retriever, generation, stats
+tests/              # 251 tests: metrics, loaders, accessibility, every retriever, generation, stats
 ```
 
 ## Getting started
@@ -240,7 +245,7 @@ Requires Python 3.10+.
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-pytest                             # 225 tests — no downloads, no GPU (tiny bundled fixtures)
+pytest                             # 251 tests — no downloads, no GPU (tiny bundled fixtures)
 ```
 
 ```bash
