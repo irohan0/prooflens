@@ -1,0 +1,35 @@
+# Phase 26 — HARD-NEGATIVE ABLATION. Fine-tuned LI trained on RANDOM negatives (not BM25 hard
+# negatives), evaluated on random/test. Everything else matches late_interaction_ft_random (OFF):
+# same base, budget, lr, query_length, frozen harness, weighting OFF — ONLY the training negatives
+# differ. Its R@10 vs late_interaction_ft_random (BM25-neg, OFF) quantifies the hard-negative lift.
+# Pair with scripts/significance.py. Checkpoint from configs/train/li_ft_random_randneg.yaml.
+name: late_interaction_ft_random_randneg
+retriever: late_interaction
+
+model:
+  hf_id: lightonai/GTE-ModernColBERT-v1                          # base (provenance only)
+  path: ${SCRATCH}/prooflens/checkpoints/li_ft_random_randneg    # the random-negative checkpoint
+  loader: pylate.models.ColBERT
+  query_length: 384         # Phase-11 locked (recovers the 26% state truncation)
+  document_length: 300
+  batch_size: 32
+
+index:
+  dir: ${SCRATCH}/prooflens/indices/li_ft_random_randneg        # fresh: re-encode with this checkpoint
+  backend: exact-maxsim
+
+data:
+  corpus_path: ${DATA_ROOT}/corpus.jsonl
+  splits_dir: ${DATA_ROOT}/
+  split_file: test.json
+  accessibility: computed
+
+symbol_weighting:
+  enabled: false            # OFF — match late_interaction_ft_random so only the negatives differ
+
+eval:
+  k_list: [1, 10]
+  retrieve_k: 100
+  splits: [random]          # split-matched: random-trained checkpoint -> random/test only
+
+seed: 42
