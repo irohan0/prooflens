@@ -97,7 +97,12 @@ def compare(path_a: str, path_b: str, metrics: list[str], n_boot: int = 10000,
             "wins": int(np.sum(d > 0)),
             "losses": int(np.sum(d < 0)),
             "ties": int(np.sum(d == 0)),
-            "significant": bool(lo > 0 or hi < 0),   # CI excludes zero
+            # The project rule (adopted in Phase 21): a CI excluding zero is NOT on its own a
+            # significance claim -- the permutation p must also clear 0.05. The two can disagree
+            # at the margin (a CI that barely excludes zero alongside p just above 0.05), and when
+            # they do the honest label is "borderline", not "significant".
+            "significant": bool((lo > 0 or hi < 0) and p < 0.05),
+            "borderline": bool((lo > 0 or hi < 0) != (p < 0.05)),
         })
     return rows
 
@@ -123,7 +128,8 @@ def main() -> None:
     for r in rows:
         ci = f"[{r['ci_low']*100:+.2f},{r['ci_high']*100:+.2f}]"
         wlt = f"{r['wins']}/{r['losses']}/{r['ties']}"
-        verdict = "SIGNIFICANT" if r["significant"] else "not significant"
+        verdict = ("SIGNIFICANT" if r["significant"]
+                   else "borderline" if r["borderline"] else "not significant")
         print(f"{r['metric']:<9} {r['mean_a']*100:>7.2f}% {r['mean_b']*100:>7.2f}% "
               f"{r['delta']*100:>+7.2f} {ci:>18} {r['p_value']:>8.4f}  {wlt:>16}  {verdict}")
     print(f"\nPaired over n={rows[0]['n']} examples; percentile bootstrap + sign-flip permutation, "

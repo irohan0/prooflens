@@ -69,6 +69,32 @@ def test_split_mismatch_is_refused(tmp_path):
         compare(str(a), str(b), ["R@1"], n_boot=10, n_perm=10)
 
 
+def test_significance_requires_both_ci_and_p(monkeypatch, tmp_path):
+    """A CI excluding zero is NOT sufficient: p must clear 0.05 too, else 'borderline'.
+
+    Regression guard — the original code used `lo > 0 or hi < 0` alone, which mislabelled a
+    marginal result (CI barely excluding zero, p = 0.053) as SIGNIFICANT.
+    """
+    import significance as sig
+
+    a, b = tmp_path / "a.json", tmp_path / "b.json"
+    _write_run(a, "random", {"e1": {"R@1": 0.0}, "e2": {"R@1": 0.0}})
+    _write_run(b, "random", {"e1": {"R@1": 1.0}, "e2": {"R@1": 1.0}})
+
+    # force the marginal corner: CI excludes zero, p just above the threshold
+    monkeypatch.setattr(sig, "bootstrap_ci", lambda *_a, **_k: (0.01, 0.5))
+    monkeypatch.setattr(sig, "permutation_p", lambda *_a, **_k: 0.0534)
+    row = sig.compare(str(a), str(b), ["R@1"], n_boot=10, n_perm=10)[0]
+    assert row["significant"] is False        # p fails -> not a significance claim
+    assert row["borderline"] is True
+
+    # and when both agree, it IS significant
+    monkeypatch.setattr(sig, "permutation_p", lambda *_a, **_k: 0.001)
+    row = sig.compare(str(a), str(b), ["R@1"], n_boot=10, n_perm=10)[0]
+    assert row["significant"] is True
+    assert row["borderline"] is False
+
+
 def test_real_effect_is_detected(tmp_path):
     """B beats A on 15% of 2000 examples and never loses -> must be flagged significant."""
     rng = np.random.default_rng(0)
