@@ -15,10 +15,11 @@ one that moves the proof forward. Premise selection is the bottleneck in scaling
 > ("late interaction") — with the symbol tokens up-weighted — should preserve that structure and
 > generalise better to *novel* premises the model never saw in training.**
 
-**Verdict so far:** supported as a **robustness** claim, not an absolute-accuracy one. With every
-confound removed by a matched control, late interaction generalises better (single-vector drops −18%
-on novel premises; late interaction stays flat) — but it *loses* on the easy `random` split, and its
-edge is **largely lexical** rather than deeply structural. All of this is measured below, honestly.
+**Verdict:** supported as a **robustness** claim, not an absolute-accuracy one. With every confound
+removed by a matched control over **5 training seeds**, late interaction generalises better
+(single-vector drops −17.9% on novel premises; late interaction stays flat, and wins on novel in
+**5/5 seeds**) — but it *loses* on the easy `random` split, and its edge is **largely lexical** rather
+than deeply structural. All of this is measured below, honestly.
 
 ---
 
@@ -41,7 +42,8 @@ model, and the ablation is a single flag flip.
 
 All numbers are on [LeanDojo Benchmark 4](https://leandojo.org/) (Mathlib4), both official test
 splits, through **one frozen harness** with an identical accessibility filter and metrics for every
-system. Recall in %. `random` n=2,811; `novel_premises` n=4,357. Single seed (42).
+system. Recall in %. `random` n=2,811; `novel_premises` n=4,357. The two fine-tuned rows are **means
+over 5 training seeds**; the rest are single-seed (42).
 
 ### Headline table
 
@@ -51,8 +53,8 @@ system. Recall in %. `random` n=2,811; `novel_premises` n=4,357. Single seed (42
 | Late interaction, off-the-shelf | no | 4.15 | 10.44 | 4.82 | 14.05 |
 | Single-vector, off-the-shelf (gte-modernbert) | no | 4.01 | 11.41 | 4.28 | 15.36 |
 | Dense ReProver (published single-vector) | yes | 13.04 | **38.59** | — | *27.6*¹ |
-| **Matched single-vector control, fine-tuned** | yes | **8.97** | **32.00** | 6.66 | 26.16 |
-| **ProofLens-LI, fine-tuned + IDF weighting** | yes | 8.56 | 27.80 | **8.56** | **28.92** |
+| **Matched single-vector control, fine-tuned** | yes | **8.92** | **32.29** | 7.04 | 26.51 |
+| **ProofLens-LI, fine-tuned + IDF weighting** | yes | 8.48 | 28.10 | **8.63** | **29.05** |
 
 <sub>¹ No *clean* dense number is obtainable on `novel_premises` from the public checkpoint (see
 [The leak we caught](#the-leak-we-caught)) — we cite ReProver's published figure. Every other cell is
@@ -66,16 +68,20 @@ negatives, base lineage (`gte-modernbert-base`), budget, learning rate (3e-6), f
 
 ![The matched control](assets/matched_control.png)
 
+Mean ± std over **5 training seeds** (42, 1, 2, 3, 4):
+
 | System (fine-tuned, everything matched) | random R@10 | novel R@10 | Gap |
 |---|--:|--:|--:|
-| **Matched single-vector control** | **32.00** | 26.16 | **−18.2%** ⬇ (5.3σ) |
-| **ProofLens-LI (late interaction)** | 27.66 | **28.46** | **+2.9%** ⬆ |
+| **Matched single-vector control** | **32.29 ± 0.53** | 26.51 ± 0.68 | **−17.9%** ⬇ (≈6.7σ) |
+| **ProofLens-LI (late interaction)** | 28.10 ± 0.31 | **29.05 ± 0.27** | **+3.4%** ⬆ |
 
-The lines cross: single-vector drops 18% seen→unseen (also on R@1 −25.8% and MRR −14.3%); late
-interaction stays flat. **Two independent single-vector systems collapse on novel** — ours (−18%) and
-published dense ReProver (38.59→27.6, −28%) — late interaction is the only trained system that holds.
-Nuance: single-vector *wins* on `random` (32.0 vs 27.7), so the claim is **robustness, not a blanket
-win**.
+The lines cross: single-vector drops ~18% seen→unseen (also on R@1 and MRR); late interaction does
+not. And per-seed, **late interaction beats the matched control on novel premises in 5 out of 5
+independent training runs**, significant in every one (R@10 Δ +1.45 to +3.38, mean +2.54). **Two
+independent single-vector systems collapse on novel** — ours (−17.9%) and published dense ReProver
+(38.59→27.6, −28%) — late interaction is the only trained system that holds. It is also **2–5× more
+stable across seeds** (std 0.13–0.31 vs 0.53–0.68). Nuance: single-vector *wins* on `random`
+(32.3 vs 28.1), so the claim is **robustness, not a blanket win**.
 
 ![Generalisation gap, all systems](assets/generalisation_gap.png)
 
@@ -191,8 +197,8 @@ construction) is the load-bearing result. None of our fine-tuned numbers carry t
 ## Where we fall short
 
 1. **Loses on `random`** to both single-vector systems — the claim is robustness, not absolute
-   accuracy. Likely undertrained (1 epoch, 4.8 GB of a 48 GB GPU) + a BPE tokenizer that fragments
-   Lean unicode.
+   accuracy. Likely undertrained (1 epoch, 4.8 GB of a 48 GB GPU), a BPE tokenizer that fragments
+   Lean unicode, and a negative-sampling recipe now known to be suboptimal (7).
 2. **The advantage is largely lexical**, not demonstrated structural reasoning (§ above).
 3. **"Novel premises" ≠ "novel symbols"** — Mathlib names are compositional; LI may win by
    compositional lexical matching (a narrower claim).
@@ -201,11 +207,17 @@ construction) is the load-bearing result. None of our fine-tuned numbers carry t
 5. ~~Symbol weight is hand-set~~ **— resolved.** The weight is now each token's **corpus IDF**
    (data-derived, scale-invariant, tuning-free), not a hand-picked constant; it matches or beats the
    old `w=4.0` (novel MRR +0.70, p = 0.008). A *learned* saliency head remains possible future work.
-6. **Single seed** — no run-to-run variance estimate yet; every headline number is seed 42 (a
-   multi-seed run is in progress). Significance *is* now attached to the symbol-weighting ablation
-   (paired bootstrap + permutation: novel significant on all four metrics, random on MRR/nDCG), and to
-   the matched control and the structural/lexical split.
-7. **Late interaction is expensive** — ~69× the index footprint of single-vector; latency untested.
+6. ~~Single seed / no significance~~ **— resolved.** The matched control is now 5 seeds (mean ± std,
+   5/5 seeds significant), and every headline comparison carries a paired bootstrap CI + permutation
+   p-value.
+7. **The training recipe is suboptimal.** A negatives ablation found BM25 hard negatives *hurt*
+   versus random negatives (R@1 −1.40, MRR −1.88, both p<0.002; R@10 borderline) — plausibly
+   false-negative contamination, since lexically similar Mathlib premises are often valid but
+   unlabelled. Our reported LI numbers are ~1–1.9 pts conservative. Whether the single-vector control
+   would gain equally is **unmeasured**.
+8. **Late interaction is expensive** — ~69× the index footprint of single-vector; latency untested.
+9. **No live prover** — downstream is offline next-tactic prediction; end-to-end proof search was
+   blocked by a lean-dojo/Lean-4.20 REPL incompatibility.
 
 ---
 
@@ -214,8 +226,8 @@ construction) is the load-bearing result. None of our fine-tuned numbers carry t
 | Part | State |
 |---|---|
 | **1 — Harness & baselines** | ✅ **Complete** — calibrated (~3% of published), leakage caught & quantified |
-| **2 — Fine-tuning & the central experiment** | 🔄 **~95%** — 2.5× lift, matched control done (thesis holds), IDF weighting + ablation significance done; left: multi-seed, hard-negative ablation, write-up |
-| **3 — Win outright** | 📋 Planned — bigger budget, Lean-aware/byte-level tokenizer, learned saliency |
+| **2 — Fine-tuning & the central experiment** | ✅ **Complete** — 2.5× lift; matched control over **5 seeds** (thesis holds, 5/5 significant); IDF weighting, ablation significance, negatives ablation all done |
+| **3 — Win outright** | 📋 Future work — bigger budget, Lean-aware/byte-level tokenizer, learned saliency, random-negative recipe |
 | **4 — Close the loop with a prover** | 🔄 Downstream eval **complete**; live proof search blocked by a lean-dojo/Lean-4.20 REPL incompatibility (env work done, resumable) |
 
 ---
@@ -234,7 +246,7 @@ scripts/            # download_data, build_index/pairs, build_token_idf, train_l
                     # run_generate, significance, expand_metrics, generation_compare,
                     # leakage/lexical stratification, plot_results
 slurm/              # cluster jobscripts
-tests/              # 251 tests: metrics, loaders, accessibility, every retriever, generation, stats
+tests/              # 259 tests: metrics, loaders, accessibility, every retriever, generation, stats
 ```
 
 ## Getting started
@@ -245,7 +257,7 @@ Requires Python 3.10+.
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-pytest                             # 251 tests — no downloads, no GPU (tiny bundled fixtures)
+pytest                             # 259 tests — no downloads, no GPU (tiny bundled fixtures)
 ```
 
 ```bash
