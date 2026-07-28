@@ -76,12 +76,21 @@ Mean ± std over **5 training seeds** (42, 1, 2, 3, 4):
 | **ProofLens-LI (late interaction)** | 28.10 ± 0.31 | **29.05 ± 0.27** | **+3.4%** ⬆ |
 
 The lines cross: single-vector drops ~18% seen→unseen (also on R@1 and MRR); late interaction does
-not. And per-seed, **late interaction beats the matched control on novel premises in 5 out of 5
-independent training runs**, significant in every one (R@10 Δ +1.45 to +3.38, mean +2.54). **Two
-independent single-vector systems collapse on novel** — ours (−17.9%) and published dense ReProver
-(38.59→27.6, −28%) — late interaction is the only trained system that holds. It is also **2–5× more
-stable across seeds** (std 0.13–0.31 vs 0.53–0.68). Nuance: single-vector *wins* on `random`
-(32.3 vs 28.1), so the claim is **robustness, not a blanket win**.
+not. The drop is **≈6.7× the run-to-run noise**, so it is not a seed artefact.
+
+**Stronger than averages — the per-seed head-to-head.** Comparing the two systems *within* each seed
+(5 independent contests on `novel`, paired bootstrap + permutation):
+
+| seed | 42 | 1 | 2 | 3 | 4 | mean |
+|---|--:|--:|--:|--:|--:|--:|
+| R@10 advantage (LI − SV) | +2.76 | +2.78 | +2.35 | +1.45 | +3.38 | **+2.54** |
+| significant? | ✅ | ✅ | ✅ | ✅ | ✅ | **5/5** |
+
+**Two independent single-vector systems collapse on novel** — ours (−17.9%) and published dense
+ReProver (38.59→27.6, −28%) — late interaction is the only trained system that holds. It is also
+**2–5× more stable across seeds** (std 0.13–0.31 vs 0.53–0.68), so the robustness shows up as
+reproducibility too. Nuance: single-vector *wins* on `random` (32.3 vs 28.1), so the claim is
+**robustness, not a blanket win**.
 
 ![Generalisation gap, all systems](assets/generalisation_gap.png)
 
@@ -97,6 +106,32 @@ stable across seeds** (std 0.13–0.31 vs 0.53–0.68). Nuance: single-vector *w
 One epoch on a single GPU takes off-the-shelf ColBERT (which *loses to BM25*) to ~2× BM25.
 
 ![Fine-tuning lift](assets/finetuning_lift.png)
+
+### Hard negatives *backfire* here — a negative result worth reporting
+
+Standard practice is to mine **hard negatives** (plausible-looking wrong premises, via BM25) rather
+than random ones. We pre-registered the expectation that they help. **They don't.** Same base, budget,
+lr, harness and weighting — only the negatives differ, with training budget verified equal
+(1,006,164 vs 1,006,133 triplets; 31,443 vs 31,442 steps):
+
+| trained with (random/test) | R@1 | R@10 | MRR | nDCG@10 |
+|---|--:|--:|--:|--:|
+| **random negatives** | **9.72** | **28.58** | **24.73** | **20.85** |
+| BM25 hard negatives *(what our reported runs use)* | 8.32 | 27.46 | 22.85 | 19.41 |
+| Δ (hard − random) | −1.40 ✅ | −1.12 ⚠️ | −1.88 ✅ | −1.44 ✅ |
+
+Significant on R@1/MRR/nDCG (p ≤ 0.002); **borderline on R@10** (p = 0.053 — not claimed).
+
+**Why, and why it may be domain-specific:** a BM25 hard negative is the premise most *lexically
+similar* to the state — and in Mathlib that is often **a premise that would genuinely work**, just not
+the one the human wrote. The gold label is one solution, not the set of all valid ones, so
+hard-negative mining injects **false negatives** and trains the model to reject relevant premises
+(our guard skipped only the top 2 of 200). Premise selection is a *many-valid-answers* task, which
+plausibly breaks a technique that works well in single-answer passage retrieval.
+
+**Consequence, stated plainly:** every other number here uses hard negatives, so **our late-interaction
+results are ~1–1.9 pts conservative**. The matched control is unaffected in validity (both arms used
+identical triplets), but whether the single-vector arm would gain equally is **unmeasured**.
 
 ### Symbol weighting — a significant, data-derived lift, concentrated on novel premises
 
@@ -168,6 +203,29 @@ proof-success rate. Premises come from each retriever's persisted top-k (no re-r
 - **FT-LI and FT-SV tie downstream on both splits** (ns everywhere). The retrieval-level difference
   between two well-fine-tuned retrievers is below the generator's resolution — honest, in both
   directions (SV leads at retrieval on `random`, LI on `novel`; neither lead survives).
+
+### Extended metrics
+
+Every run persists its full ranked top-100 per example, so **any @k metric is recomputable offline
+without re-running a model** (`scripts/expand_metrics.py`, gated by a check that the recomputation
+reproduces each file's stored aggregate — passes on all 23 eval files). Beyond the reported four:
+
+| system (novel_premises) | R@1 | R@5 | R@10 | R@100 | MRR | MAP | nDCG@10 | median rank | any-hit |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|--:|
+| BM25 | 5.65 | 12.80 | 16.56 | 30.28 | 15.38 | 9.77 | 12.31 | 7 | 46.34 |
+| Matched single-vector control | 6.66 | 18.47 | 26.16 | 58.87 | 21.29 | 14.37 | 17.92 | 8 | 75.28 |
+| **ProofLens-LI (IDF)** | **8.56** | **21.95** | **28.92** | 56.87 | **24.70** | **16.45** | **20.65** | **6** | 75.46 |
+
+*any-hit* = fraction of examples with the gold premise anywhere in the top 100; *median rank* = rank of
+the first gold hit. Our system finds a correct premise for **75%** of novel examples at a **median rank
+of 6**.
+
+### How significance is decided
+
+Every comparison is **paired** over per-example records (both systems answer the same examples), with a
+10,000-sample bootstrap CI and a 10,000-permutation sign-flip test. We claim significance only when the
+**CI excludes zero *and* p < 0.05**; when the two disagree we report *borderline* and claim nothing.
+`scripts/significance.py`.
 
 ---
 
@@ -246,7 +304,7 @@ scripts/            # download_data, build_index/pairs, build_token_idf, train_l
                     # run_generate, significance, expand_metrics, generation_compare,
                     # leakage/lexical stratification, plot_results
 slurm/              # cluster jobscripts
-tests/              # 259 tests: metrics, loaders, accessibility, every retriever, generation, stats
+tests/              # 260 tests: metrics, loaders, accessibility, every retriever, generation, stats
 ```
 
 ## Getting started
@@ -257,7 +315,7 @@ Requires Python 3.10+.
 python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-pytest                             # 259 tests — no downloads, no GPU (tiny bundled fixtures)
+pytest                             # 260 tests — no downloads, no GPU (tiny bundled fixtures)
 ```
 
 ```bash
